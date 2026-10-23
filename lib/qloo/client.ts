@@ -1,0 +1,186 @@
+import { sanitizeEntityIds, sanitizeSearchQuery, sanitizeTagIds } from "@/lib/qloo/ids";
+import { qlooErrorMessage, normalizeEntity, normalizeTag, unwrapEntities, unwrapTags } from "@/lib/qloo/parse";
+import type { InsightTarget, QlooTraceCall, TasteClient, TasteEntity, TasteTag } from "@/lib/qloo/types";
+import { redactSecrets } from "@/lib/security/redact";
+
+export class QlooError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly path: string,
+  ) {
+    super(message);
+    this.name = "QlooError";
+  }
+}
+
+type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+const SEARCH_TYPES = [
+  "urn:entity:movie",
+  "urn:entity:tv_show",
+  "urn:entity:book",
+  "urn:entity:person",
+  "urn:entity:artist",
+  "urn:entity:brand",
+  "urn:entity:place",
+].join(",");
+
+/**
+ * Live client for the Qloo hackathon API.
+ * Docs: https://docs.qloo.com/reference/qloo-llm-hackathon-developer-guide
+ *
+ * - Base URL defaults to https://hackathon.api.qloo.com (hackathon keys 401 on api.qloo.com).
+ * - Auth header is `X-Api-Key`, never a bearer token and never a query parameter.
+ * - `/search`, `/v2/insights`, and `/v2/tags` are GET requests. `/recommendations` is not used.
+ */
+export class QlooClient implements TasteClient {
+  readonly mode = "live" as const;
+  readonly trace: QlooTraceCall[] = [];
+
+  constructor(
+    private readonly options: {
+      baseUrl: string;
+      apiKey: string;
+      fetchImpl?: FetchLike;
+    },
+  ) {}
+
+  async search(query: string, take = 8): Promise<TasteEntity[]> {
+    const safeQuery = sanitizeSearchQuery(query);
+    const safeTake = String(Math.min(Math.max(take, 1), 20));
+    if (safeQuery.length < 2) return [];
+
+    const mapRows = (body: unknown) =>
+      unwrapEntities(body)
+        .map((row) => normalizeEntity(row, false))
+        .filter((row): row is TasteEntity => row !== null)
+        .slice(0, take);
+
+    // A 400 sometimes means the untyped search is not accepted. An empty 200 or a 404 is a real miss
+    // and must not spend a second call.
+    try {
+      const body = await this.get("/search", { query: safeQuery, take: safeTake });
+      return mapRows(body);
+    } catch (error) {
+      if (!(error instanceof QlooError) || error.status !== 400) throw error;
+    }
+
+    const typed = await this.get("/search", { query: safeQuery, take: safeTake, types: SEARCH_TYPES });
+    return mapRows(typed);
+  }
+
+  async searchTags(query: string, take = 5): Promise<TasteTag[]> {
+    const safeQuery = sanitizeSearchQuery(query, 40);
+    if (safeQuery.length < 2) return [];
+    const body = await this.get("/v2/tags", {
+      "filter.query": safeQuery,
+      take: String(Math.min(Math.max(take, 1), 20)),
+      "feature.typo_tolerance": "true",
+    });
+    return unwrapTags(body)
+      .map((row) => normalizeTag(row))
+      .filter((row): row is TasteTag => row !== null)
+      .slice(0, take);
+  }
+
+  async insights(args: {
+    filterType: InsightTarget;
+    entityIds: string[];
+    tagIds: string[];
+    take?: number;
+  }): Promise<{ entities: TasteEntity[]; tags: TasteTag[] }> {
+    const take = Math.min(Math.max(args.take ?? 6, 1), 20);
+    const entityIds = sanitizeEntityIds(args.entityIds);
+    const tagIds = sanitizeTagIds(args.tagIds);
+    if (!entityIds.length && !tagIds.length) {
+      return { entities: [], tags: [] };
+    }
+    const query: Record<string, string> = {
+      "filter.type": args.filterType,
+      take: String(take),
+      "feature.explainability": "true",
+    };
+    if (entityIds.length) query["signal.interests.entities"] = entityIds.join(",");
+    if (tagIds.length) query["signal.interests.tags"] = tagIds.join(",");
+
+    const body = await this.get("/v2/insights", query);
+    const signalIds = entityIds;
+    const entities = unwrapEntities(body)
+      .map((row) => normalizeEntity(row, false, signalIds))
+      .filter((row): row is TasteEntity => row !== null)
+      .filter((row) => !entityIds.includes(row.id));
+    const tags = unwrapTags(body)
+      .map((row) => normalizeTag(row))
+      .filter((row): row is TasteTag => row !== null);
+    return { entities: entities.slice(0, take), tags: tags.slice(0, take) };
+  }
+
+  private async get(path: "/search" | "/v2/insights" | "/v2/tags", query: Record<string, string>, attempt = 0): Promise<unknown> {
+    const url = new URL(this.options.baseUrl + path);
+    for (const [key, value] of Object.entries(query)) {
+      if (value) url.searchParams.set(key, value);
+    }
+
+    const fetchImpl = this.options.fetchImpl ?? fetch;
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          "X-Api-Key": this.options.apiKey,
+        },
+        signal: AbortSignal.timeout(15_000),
+        cache: "no-store",
+      });
+    } catch (error) {
+      const message = redactSecrets(error instanceof Error ? error.message : "Network error", [this.options.apiKey]);
+      this.trace.push({ method: "GET", path, query, status: 0, resultCount: 0, mocked: false, error: message });
+      throw new QlooError(message, 0, path);
+    }
+
+    if (response.status === 429 && attempt < 1) {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return this.get(path, query, attempt + 1);
+    }
+
+    const text = await response.text();
+    let body: unknown = null;
+    if (text) {
+      try {
+        body = JSON.parse(text) as unknown;
+      } catch {
+        body = { message: text.slice(0, 280) };
+      }
+    }
+
+    if (response.status === 404 && (path === "/search" || path === "/v2/tags")) {
+      this.trace.push({ method: "GET", path, query, status: 404, resultCount: 0, mocked: false });
+      return { results: [] };
+    }
+
+    if (!response.ok) {
+      let message = redactSecrets(qlooErrorMessage(body, response.statusText), [this.options.apiKey]);
+      if (response.status === 401) {
+        const hint =
+          "Hackathon keys only authenticate against https://hackathon.api.qloo.com with the X-Api-Key header.";
+        message = /[.!?]$/.test(message) ? `${message} ${hint}` : `${message}. ${hint}`;
+      }
+      this.trace.push({
+        method: "GET",
+        path,
+        query,
+        status: response.status,
+        resultCount: 0,
+        mocked: false,
+        error: message,
+      });
+      throw new QlooError(message, response.status, path);
+    }
+
+    const count = unwrapEntities(body).length + unwrapTags(body).length;
+    this.trace.push({ method: "GET", path, query, status: response.status, resultCount: count, mocked: false });
+    return body;
+  }
+}
