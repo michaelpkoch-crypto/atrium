@@ -62,7 +62,7 @@ export function RoomFrame({
   label: string;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const day = scene.window === "day-pastel" || scene.window === "day-concrete";
+  const day = scene.timeLabel === "Day";
   const selectedLight = scene.lights.find((light) => light.id === selected);
   const selectedObject = scene.objects.find((object) => object.id === selected);
   const selectedDisplay = selected === "display" ? scene.display : null;
@@ -175,7 +175,7 @@ function RoomSvg({
   onClear: () => void;
 }) {
   const uid = useId().replace(/:/g, "");
-  const day = scene.window === "day-pastel" || scene.window === "day-concrete";
+  const day = scene.timeLabel === "Day";
   const wallTop = day ? tint(palette.ambient, 0.06) : tint(palette.ambient, 0.34);
   const wallBottom = day ? shade(palette.ambient, 0.08) : tint(palette.ambient, 0.08);
   const floor = day ? shade(palette.ambient, 0.22) : shade(palette.primary, 0.72);

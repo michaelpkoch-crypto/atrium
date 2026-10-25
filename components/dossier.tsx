@@ -221,6 +221,7 @@ function RoomDossier({
       </Section>
 
       <Section title="Qloo calls">
+        <p className="text-xs text-white/70">Compiled in {(result.elapsedMs / 1000).toFixed(1)}s.</p>
         <ul className="space-y-2">
           {trace.map((call, index) => (
             <li key={`${call.path}-${index}`} className="font-mono text-[10px] leading-4 text-white/70">
@@ -312,7 +313,7 @@ function EntityRow({
         {affinity != null ? <span className="font-mono text-[10px] text-white/80">{affinityText(affinity)}</span> : null}
       </div>
       <p className="font-mono text-[10px] text-white/75">
-        {typeLabel(type)}
+        {typeLabel(type, name)}
         {mock ? " · fixture" : ""}
         {tags.length ? ` · ${tags.slice(0, 4).join(", ")}` : ""}
       </p>

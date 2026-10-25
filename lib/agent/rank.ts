@@ -99,7 +99,8 @@ export function relevantPlaces(prompt: string, places: TasteEntity[]): TasteEnti
   });
 }
 
-const GENERIC_ARTIST_TAG = new Set([
+/** Time, place, and generic music words are not a shared genre. Classical, jazz, and piano are. */
+const NOT_SHARED = new Set([
   "music",
   "musician",
   "artist",
@@ -114,40 +115,55 @@ const GENERIC_ARTIST_TAG = new Set([
   "cinema",
   "composer",
   "orchestra",
-  "classical",
   "pop",
   "rock",
   "singer",
   "vocal",
+  "vocals",
   "instrumental",
   "theme",
   "english",
   "american",
+  "turkish",
+  "japan",
+  "japanese",
+  "french",
+  "british",
+  "italian",
+  "night",
+  "day",
+  "dusk",
+  "rain",
+  "live",
+  "male",
+  "female",
+  "vinyl",
+  "novel",
+  "indie",
 ]);
 
 /**
- * Seed artists stay. Neighbors stay when they share a specific tag with the seeds or the mood.
- * A lone film-composer or a pop singer with no shared tag drops. A pair of high-affinity
- * neighbors with no shared tag is kept only for Bridgerton, where that audience crossover is the insight.
+ * Seed artists stay. A neighbor stays only with an exact genre or mood token in common
+ * (jazz, piano, ambient, classical, symmetry). A shorter list is better than Turkish pop
+ * after Bill Evans. Bridgerton still keeps its two audience crossovers.
  */
 export function rankInsightArtists(artists: TasteEntity[], seeds: TasteEntity[], proposal: Proposal, prompt: string): TasteEntity[] {
   const seedIds = new Set(seeds.map((seed) => seed.id));
-  const wanted = new Set(
-    [...seeds.flatMap(specificTokens), ...proposal.moodTags.flatMap((tag) => tokens(tag)), ...proposal.placeTags.flatMap((tag) => tokens(tag))].filter(
-      (token) => token.length > 3 && !GENERIC_ARTIST_TAG.has(token),
-    ),
-  );
+  const wanted = new Set([...seeds.flatMap(sharedTokens), ...proposal.moodTags.flatMap((tag) => sharedTokensFrom(tag))]);
   const anchored = artists.filter((artist) => seedIds.has(artist.id));
   const scored = artists
     .filter((artist) => !seedIds.has(artist.id))
     .map((artist) => {
-      const tags = specificTokens(artist);
-      const overlap = tags.filter((token) => wanted.has(token) || [...wanted].some((want) => want.length > 4 && (token.includes(want) || want.includes(token)))).length;
+      const overlap = sharedTokens(artist).filter((token) => wanted.has(token)).length;
       return { artist, overlap, affinity: artist.affinity ?? 0 };
     });
-  const aligned = scored.filter((row) => row.overlap > 0).sort((a, b) => b.overlap - a.overlap || b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
-  const surprises = scored.filter((row) => row.overlap === 0 && row.affinity >= 0.84).sort((a, b) => b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
-  const audience = /bridgerton/i.test(prompt) && surprises.length >= 2 ? surprises.slice(0, 2) : surprises.filter((row) => row.affinity >= 0.93).slice(0, 1);
+  const aligned = scored
+    .filter((row) => row.overlap > 0)
+    .sort((a, b) => b.overlap - a.overlap || b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
+  const surprises = scored
+    .filter((row) => row.overlap === 0 && row.affinity >= 0.84)
+    .sort((a, b) => b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
+  const audience = /bridgerton/i.test(prompt) && surprises.length >= 2 ? surprises.slice(0, 2) : [];
   const picked: TasteEntity[] = [];
   for (const artist of [...anchored, ...aligned.map((row) => row.artist), ...audience.map((row) => row.artist)]) {
     if (picked.some((item) => item.id === artist.id)) continue;
@@ -157,13 +173,15 @@ export function rankInsightArtists(artists: TasteEntity[], seeds: TasteEntity[],
   return picked;
 }
 
-function specificTokens(entity: TasteEntity): string[] {
+function sharedTokens(entity: TasteEntity): string[] {
+  return entity.tags.flatMap((tag) => sharedTokensFrom(tag.name));
+}
+
+function sharedTokensFrom(name: string): string[] {
   const out: string[] = [];
-  for (const tag of entity.tags) {
-    for (const token of tokens(humanizeTagName(tag.name))) {
-      if (token.length <= 3 || GENERIC_ARTIST_TAG.has(token)) continue;
-      out.push(token);
-    }
+  for (const token of tokens(humanizeTagName(name))) {
+    if (token.length <= 3 || NOT_SHARED.has(token)) continue;
+    out.push(token);
   }
   return out;
 }

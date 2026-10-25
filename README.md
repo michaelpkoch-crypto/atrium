@@ -81,7 +81,7 @@ The client does not call `/recommendations` or `/recs`.
 
 Calls share a queue of two. A 429 waits on `Retry-After` and is not listed unless the retry fails. Successful reads stay in an in-memory cache for 24 hours. The API key is not part of the cache key, and no Qloo payload is committed.
 
-Artists set the tempo. Places set the counter. Tag names pick a color family. When the kept tags have no color prior, the seeds' own tags (neon, retro, crime) color the lamps. The chip cites that tag.
+Artists set the tempo. A neighbor stays only when it shares a genre or a mood tag with the seeds, such as jazz, piano, ambient, or classical. A short list is kept on purpose. Places set the counter, and only when the venue is the kind the prompt asked for: a diner, a café, a tea room, a bar, a kissaten. A church, a hotel, or a landmark does not pour. Tag names pick a color family. When the kept tags have no color prior, the seeds' own tags (neon, retro, crime) color the lamps. The chip cites that tag. Both rooms use the prompt's time of day, so a dusk prompt reads Dusk on the plain side too.
 
 Auth is `X-Api-Key`. A 401 names the hackathon host. Personal data is not sent. The prompt is a cultural description, not a user profile. Results describe what groups tend to like.
 

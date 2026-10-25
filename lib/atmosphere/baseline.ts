@@ -1,3 +1,4 @@
+import { knownProposal, sceneFromPrompt, windowForScene } from "@/lib/agent/propose";
 import { hashString, hslToHex } from "@/lib/atmosphere/color";
 import { PLANS, type ObjectKind } from "@/lib/atmosphere/plans";
 import { roomSceneSchema, type Atmosphere, type Citation, type RoomScene } from "@/lib/atmosphere/schema";
@@ -327,9 +328,10 @@ function pickPack(prompt: string): Pack {
 
 export function stereotypeBaseline(prompt: string, note?: string): PlainRoom {
   const pack = pickPack(prompt);
+  const window = windowForScene(knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt));
   const room = sceneFromPlain({
     plan: pack.plan,
-    window: pack.window,
+    window,
     poster: pack.poster,
     kicker: "Plain reading",
     subtitle: "No taste graph",
@@ -345,7 +347,7 @@ export function stereotypeBaseline(prompt: string, note?: string): PlainRoom {
     logline: pack.logline,
     assumptions: pack.assumptions,
     artists: pack.artists,
-    palette: paletteFor(room, pack.window),
+    palette: paletteFor(room, window),
     room,
     audio: {
       tempoBpm: pack.tempo,
@@ -430,6 +432,13 @@ function guessKind(label: string): ObjectKind {
   return "table";
 }
 
+function assumptionPhrase(raw: string): string {
+  let text = raw.replace(/\s+/g, " ").trim().replace(/[.?!]+$/g, "");
+  if (!text) text = "a generic mood";
+  text = text.charAt(0).toLowerCase() + text.slice(1);
+  return `The plain reading assumed "${text}".`;
+}
+
 function clip(value: string, max: number): string {
   return value.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
@@ -478,7 +487,7 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
 
   const qlooAdded = added.slice(0, 6);
   const qlooScored = scored.slice(0, 3);
-  const assumption = plain.assumptions[0] ?? "a generic mood";
+  const assumption = assumptionPhrase(plain.assumptions[0] ?? "a generic mood");
   const headlines: string[] = [];
   const audience = audienceLine(
     prompt,
@@ -495,11 +504,11 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
   if (missed) headlines.push(`${missed.label} is in the room. The plain reading did not name it.`);
   const lamp = atmosphere.room.lights.find((light) => light.citation.tag)?.citation.tag;
   if (lamp && headlines.length < 4) headlines.push(`${lamp} colors the lamps.`);
-  headlines.push(`The plain reading assumed ${assumption}.`);
+  const lines = [...headlines.slice(0, 4), assumption];
 
   return {
-    headline: headlines[0] ?? `The plain reading stayed at ${assumption}.`,
-    headlines: headlines.slice(0, 5),
+    headline: lines[0] ?? assumption,
+    headlines: lines.slice(0, 5),
     qlooAdded,
     qlooScored,
     plainAssumed: plain.assumptions,

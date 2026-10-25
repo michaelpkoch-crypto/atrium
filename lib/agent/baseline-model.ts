@@ -1,8 +1,9 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
 
+import { knownProposal, sceneFromPrompt, windowForScene } from "@/lib/agent/propose";
 import { plainRoomFromModel, stereotypeBaseline, type PlainRoom } from "@/lib/atmosphere/baseline";
-import type { TextureKind, WindowScene } from "@/lib/atmosphere/families";
+import type { TextureKind } from "@/lib/atmosphere/families";
 import type { LlmConfig } from "@/lib/config";
 import { modelFor } from "@/lib/agent/llm";
 import { redactSecrets } from "@/lib/security/redact";
@@ -54,7 +55,7 @@ export async function modelBaseline(prompt: string, llm: LlmConfig): Promise<Pla
       artists: cleanList(output.artists, 80, 4),
       tempoBpm: output.tempoBpm ?? 80,
       texture: asTexture(output.texture),
-      window: asWindow(output.window),
+      window: windowForScene(knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt)),
     });
   } catch (error) {
     const message = clipError(error, secrets);
@@ -144,10 +145,6 @@ function cleanList(values: string[] | undefined, max: number, limit: number): st
 
 function asTexture(value: string | undefined): TextureKind {
   return TEXTURES.find((item) => item === value) ?? "air";
-}
-
-function asWindow(value: string | undefined): WindowScene {
-  return WINDOWS.find((item) => item === value) ?? "night-city";
 }
 
 function clipError(error: unknown, secrets: string[]): string {

@@ -6,6 +6,7 @@ import {
   humanizeTagName,
   offVibe,
   placeFits,
+  rankCounterPlaces,
   tagAllowed,
   tagFitsMood,
   tagsForRoom,
@@ -76,12 +77,13 @@ export async function assembleGraph(
   }
 
   const insightPlaces = buckets.places.filter((place) => placeFits(place, proposal, prompt));
-  let places = dedupeByName(insightPlaces.length ? insightPlaces : found.places).slice(0, 4);
+  let places = rankCounterPlaces(dedupeByName([...insightPlaces, ...found.places]), proposal).slice(0, 4);
   if (!places.length) {
     const synonyms = broaderPlaceQueries(proposal.placeQueries);
     const extra = await Promise.all(synonyms.slice(0, 2).map(async (query) => ({ query, hits: await searchSafe(client, query, "urn:entity:place") })));
-    places = dedupeByName(
-      extra.flatMap((row) => row.hits).filter((place) => place.type.includes("place") && placeFits(place, proposal, prompt)),
+    places = rankCounterPlaces(
+      dedupeByName(extra.flatMap((row) => row.hits).filter((place) => place.type.includes("place") && placeFits(place, proposal, prompt))),
+      proposal,
     ).slice(0, 4);
     if (synonyms.length) {
       steps.push({

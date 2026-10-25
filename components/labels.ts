@@ -1,4 +1,5 @@
-export function typeLabel(type: string): string {
+export function typeLabel(type: string, name?: string): string {
+  if (name && type.includes("movie") && /pride\s*(&|and)\s*prejudice/i.test(name)) return "film (2005)";
   const labels: Record<string, string> = {
     "urn:entity:artist": "Artist",
     "urn:entity:place": "Place",
@@ -26,7 +27,7 @@ export function provenanceLine(citation: {
   affinity: number | null;
   tag?: string | null;
 }): string {
-  const kind = typeLabel(citation.type);
+  const kind = typeLabel(citation.type, citation.name);
   const affinity = citation.affinity == null ? null : `affinity ${citation.affinity.toFixed(2)}`;
   if (citation.type === "baseline") {
     return ["plain reading", "no Qloo call", citation.name].join(" · ");

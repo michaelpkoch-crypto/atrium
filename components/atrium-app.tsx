@@ -208,34 +208,35 @@ export function AtriumApp() {
   const showPlain = view === "plain" && plain;
 
   return (
-    <div className="min-h-dvh bg-[#0c0b0a] text-[#f4efe6]">
-      <header className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
-        <div>
-          <p className="font-display text-2xl tracking-tight sm:text-3xl">Atrium</p>
-          <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room · MIT License</p>
+    <div className="flex h-dvh flex-col overflow-hidden bg-[#0c0b0a] text-[#f4efe6]">
+      <div id="prompt-bar" className="z-40 shrink-0 border-b border-white/10 bg-[#0c0b0a]">
+        <header className="flex items-center justify-between gap-3 px-4 pt-3 pb-1 sm:px-6">
+          <div>
+            <p className="font-display text-2xl tracking-tight sm:text-3xl">Atrium</p>
+            <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room · MIT License</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {status?.llm ? (
+              <Badge variant="outline" className="border-white/30 bg-white/10 text-[#f4efe6]">
+                Agent · {status.llm.model}
+              </Badge>
+            ) : null}
+            {mock == null ? null : (
+              <Badge
+                variant="outline"
+                className={mock ? "border-amber-200/70 bg-amber-200/15 text-amber-50" : "border-emerald-200/50 bg-emerald-200/10 text-emerald-50"}
+              >
+                {mock ? "Mock fixture" : "Live Qloo"}
+              </Badge>
+            )}
+          </div>
+        </header>
+        <div className="px-4 pb-3 sm:px-6">
+          <PromptDock prompt={prompt} loading={loading} onPrompt={setPrompt} onSubmit={compile} />
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          {status?.llm ? (
-            <Badge variant="outline" className="border-white/30 bg-white/10 text-[#f4efe6]">
-              Agent · {status.llm.model}
-            </Badge>
-          ) : null}
-          {mock == null ? null : (
-            <Badge
-              variant="outline"
-              className={mock ? "border-amber-200/70 bg-amber-200/15 text-amber-50" : "border-emerald-200/50 bg-emerald-200/10 text-emerald-50"}
-            >
-              {mock ? "Mock fixture" : "Live Qloo"}
-            </Badge>
-          )}
-        </div>
-      </header>
-
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0c0b0a]/95 px-4 py-2 backdrop-blur-md xl:right-[380px]">
-        <PromptDock prompt={prompt} loading={loading} onPrompt={setPrompt} onSubmit={compile} />
       </div>
-      <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
-        <main className="min-w-0 space-y-4 px-4 pb-36 sm:px-6">
+      <div className="min-h-0 flex-1 overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
+        <main className="min-w-0 space-y-4 px-4 py-4 sm:px-6">
           <div
             className={result ? "grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2" : undefined}
             onTouchStart={(event) => {
@@ -348,7 +349,7 @@ export function AtriumApp() {
           {result ? <AgentTrace result={result} /> : null}
         </main>
 
-        <aside className="border-t border-white/10 xl:sticky xl:top-0 xl:h-dvh xl:overflow-y-auto xl:border-t-0 xl:border-l">
+        <aside className="border-t border-white/10 xl:sticky xl:top-0 xl:max-h-full xl:overflow-y-auto xl:border-t-0 xl:border-l">
           <Dossier result={result} error={error} loading={loading} dispatching={dispatching} onDispatch={sendLights} />
         </aside>
       </div>
@@ -424,7 +425,9 @@ function AgentTrace({ result }: { result: RoomPayload }) {
   return (
     <section className="border border-white/10 p-3">
       <h2 className="font-mono text-[10px] tracking-[0.16em] text-white/55 uppercase">How Qloo was asked</h2>
-      <p className="mt-1 text-xs text-white/70">{planner}</p>
+      <p className="mt-1 text-xs text-white/70">
+        Compiled in {(result.elapsedMs / 1000).toFixed(1)}s. {planner}
+      </p>
       {diagnostics?.choice?.reason ? <p className="mt-1 text-xs text-white/75">{diagnostics.choice.reason}</p> : null}
       {result.agent.fallback ? <p className="mt-1 text-xs text-amber-100/80">{result.agent.fallback}</p> : null}
       <ol className="mt-3 space-y-2">
@@ -465,6 +468,7 @@ function AgentTrace({ result }: { result: RoomPayload }) {
             <pre className="max-h-64 overflow-auto border border-white/10 p-2 text-[10px] leading-4 text-white/70">
               {JSON.stringify(
                 {
+                  elapsedMs: result.elapsedMs,
                   choice: diagnostics.choice,
                   modelError: diagnostics.modelError,
                   plainError: diagnostics.plainError,

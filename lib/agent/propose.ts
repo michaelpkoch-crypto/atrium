@@ -1,5 +1,5 @@
 import { placeQueries, tagQueriesFor, tokens } from "@/lib/agent/queries";
-import { matchFamily } from "@/lib/atmosphere/families";
+import { matchFamily, type WindowScene } from "@/lib/atmosphere/families";
 import type { TasteEntity, TasteTag } from "@/lib/qloo/types";
 
 export type WorkKind = "movie" | "tv" | "book";
@@ -172,6 +172,22 @@ export function sceneFromPrompt(prompt: string): SceneMood {
   return { time: "night", weather: "clear", brightness: "dim" };
 }
 
+/** The word on both rooms. Rain is the weather label; day, dusk, and night come from the prompt. */
+export function labelForScene(scene: SceneMood): "Day" | "Dusk" | "Rain" | "Night" {
+  if (scene.time === "day") return "Day";
+  if (scene.time === "dusk") return "Dusk";
+  if (scene.weather === "rain") return "Rain";
+  return "Night";
+}
+
+/** Plain-room window for the same clock. The Qloo room may still use a neon city at night. */
+export function windowForScene(scene: SceneMood): WindowScene {
+  if (scene.time === "day") return "day-pastel";
+  if (scene.time === "dusk") return "dusk";
+  if (scene.weather === "rain") return "rain";
+  return "night-city";
+}
+
 export function resolveScene(prompt: string, model: SceneMood | null): SceneMood {
   const inferred = sceneFromPrompt(prompt);
   const text = prompt.toLowerCase();
@@ -264,6 +280,88 @@ export function isLandmark(name: string): boolean {
   return LANDMARK.test(name);
 }
 
+const RELIGIOUS =
+  /\b(church|chapel|cathedral|basilica|mosque|temple|shrine|synagogue|abbey|monastery|parish|igreja|iglesia|eglise|duomo|cemetery|graveyard)\b/i;
+const LODGING = /\b(hotel|resort|hostel|motel)\b/i;
+const FICTION_VENUE =
+  /\b(sleepy hollow|beyond the wall|hogwarts|diagon alley|rivendell|westeros|gotham|mordor|narnia|winterfell)\b/i;
+
+/** A church, a hotel, a landmark, or a fiction set does not pour the drink. */
+export function counterRejected(name: string): boolean {
+  const text = fold(name);
+  return isLandmark(name) || isLandmark(text) || RELIGIOUS.test(text) || LODGING.test(text) || FICTION_VENUE.test(text);
+}
+
+type Service = "diner" | "restaurant" | "tea" | "cafe" | "bar" | "bath" | "bakery";
+
+const SERVICE_NAME: Record<Service, RegExp> = {
+  diner: /\b(diner|eatery|grill)\b/i,
+  restaurant: /\b(restaurant|bistro|trattoria|tavern)\b/i,
+  tea: /\b(tea\s*rooms?|tearooms?|tea\s*houses?|teahouses?)\b/i,
+  cafe: /\b(cafes?|coffee|espresso|kissaten|kissa)\b/i,
+  bar: /\b(bars?|pubs?|lounges?)\b/i,
+  bath: /\b(bath\s*houses?|bathhouses?|onsens?|sento)\b/i,
+  bakery: /\b(patisseries?|bakeries|bakery|pastries|pastry|brunch)\b/i,
+};
+
+const SERVICE_TAG: Record<Service, RegExp> = {
+  diner: /\b(diner|eatery|grill)\b/i,
+  restaurant: /\b(restaurant|bistro|trattoria)\b/i,
+  tea: /\b(tea|tearoom|teahouse)\b/i,
+  cafe: /\b(cafe|coffee|espresso|kissaten|kissa)\b/i,
+  bar: /\b(bar|pub|lounge|jazz)\b/i,
+  bath: /\b(bathhouse|onsen|sento)\b/i,
+  bakery: /\b(patisserie|bakery|pastry|brunch)\b/i,
+};
+
+function wantedServices(proposal: Proposal): Service[] {
+  const blob = [...proposal.placeQueries, ...proposal.placeTags].join(" ").toLowerCase();
+  const out: Service[] = [];
+  const add = (service: Service) => {
+    if (!out.includes(service)) out.push(service);
+  };
+  if (/\bdiner\b/.test(blob)) {
+    add("diner");
+    add("restaurant");
+  }
+  if (/tea/.test(blob)) add("tea");
+  if (/kissaten|kissa|cafe|coffee/.test(blob)) add("cafe");
+  if (/\bbar\b|jazz|lounge|pub/.test(blob)) add("bar");
+  if (/bath|onsen|sento/.test(blob)) add("bath");
+  if (/patisserie|brunch|pastry|bakery/.test(blob)) add("bakery");
+  return out;
+}
+
+function counterScore(place: TasteEntity, services: Service[]): number {
+  if (counterRejected(place.name)) return -1;
+  if (!services.length) return 1;
+  const name = fold(place.name);
+  const tags = fold(place.tags.map((tag) => humanizeTagName(tag.name)).join(" "));
+  let score = 0;
+  for (const service of services) {
+    if (SERVICE_NAME[service].test(name)) score += 5;
+    else if (SERVICE_TAG[service].test(tags)) score += 2;
+  }
+  return score;
+}
+
+/**
+ * The counter is the place that can actually serve the prompt.
+ * A diner name outranks a landmark that merely carried the diner tag.
+ * Score 0 is dropped: fewer venues, not a church.
+ */
+export function rankCounterPlaces(places: TasteEntity[], proposal: Proposal): TasteEntity[] {
+  const services = wantedServices(proposal);
+  const ranked = places
+    .map((place) => ({ place, score: counterScore(place, services) }))
+    .filter((row) => row.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score || (b.place.affinity ?? -1) - (a.place.affinity ?? -1) || a.place.name.localeCompare(b.place.name),
+    );
+  return dedupeByName(ranked.map((row) => row.place));
+}
+
 const GENERIC_CATEGORY = new Set([
   "cafe",
   "bar",
@@ -353,11 +451,25 @@ export function tagFitsMood(name: string, proposal: Proposal): boolean {
  */
 export function tagsForRoom(tags: TasteTag[], proposal: Proposal): TasteTag[] {
   const kept = tags.filter((tag) => tagFitsMood(tag.name, proposal));
-  if (kept.some((tag) => matchFamily(tag.name))) return kept.slice(0, 8);
-  const extra = tags.filter(
-    (tag) => !kept.some((item) => item.id === tag.id) && !rejectedTag(tag.name, proposal) && matchFamily(tag.name),
-  );
-  return [...kept, ...extra].slice(0, 8);
+  const picked = kept.some((tag) => matchFamily(tag.name))
+    ? kept
+    : [
+        ...kept,
+        ...tags.filter((tag) => !kept.some((item) => item.id === tag.id) && !rejectedTag(tag.name, proposal) && matchFamily(tag.name)),
+      ];
+  return uniqueTags(picked).slice(0, 8);
+}
+
+function uniqueTags(tags: TasteTag[]): TasteTag[] {
+  const seen = new Set<string>();
+  const out: TasteTag[] = [];
+  for (const tag of tags) {
+    const key = humanizeTagName(tag.name).toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+  }
+  return out;
 }
 
 function rejectedTag(name: string, proposal: Proposal): boolean {

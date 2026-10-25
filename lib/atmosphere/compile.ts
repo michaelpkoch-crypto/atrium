@@ -2,7 +2,7 @@ import { hslToHex, hashString } from "@/lib/atmosphere/color";
 import { audienceLine } from "@/lib/atmosphere/baseline";
 import { pourFor } from "@/lib/atmosphere/drinks";
 import { matchFamily, type Family, type LightBias, type PlanId, type ScaleName, type TextureKind, type WindowScene } from "@/lib/atmosphere/families";
-import { sceneFromPrompt, type SceneMood } from "@/lib/agent/propose";
+import { labelForScene, sceneFromPrompt, type SceneMood } from "@/lib/agent/propose";
 import { PLANS, type ObjectKind, type ObjectRole, type ObjectSlot } from "@/lib/atmosphere/plans";
 import { atmosphereSchema, type Atmosphere, type Citation, type VisualMode } from "@/lib/atmosphere/schema";
 import type { TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
@@ -26,15 +26,6 @@ const RATIOS: Record<ScaleName, number[]> = {
   lydian: [1, 9 / 8, 5 / 4, 3 / 2, 7 / 4],
   phrygian: [1, 16 / 15, 4 / 3, 3 / 2, 9 / 5],
   mixolydian: [1, 9 / 8, 5 / 4, 3 / 2, 5 / 3],
-};
-
-const TIME_LABEL: Record<WindowScene, string> = {
-  "night-city": "Night",
-  dusk: "Dusk",
-  rain: "Rain",
-  "day-pastel": "Day",
-  "day-concrete": "Day",
-  "neon-city": "Night",
 };
 
 const TEXTURE_LABEL: Record<TextureKind, string> = {
@@ -313,16 +304,21 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
         : "paper"
       : (family?.mode ??
         (["grain-warm", "paper", "rain", "neon-grid", "symmetry", "brutalist"] as const)[hashString(anchor.id) % 6]);
-  const day = scene.brightness === "bright" || window === "day-pastel" || window === "day-concrete";
+  const day = labelForScene(scene) === "Day";
 
   const openSlots = plan.lights.map((slot, index) => ({ slot, index, used: false }));
   const draft: { weight: number; light: Atmosphere["room"]["lights"][number] }[] = [];
   const remaining = [...signals];
   const usedFamilies = new Set<string>();
+  const usedTags = new Set<string>();
   while (draft.length < plan.lights.length && remaining.length) {
-    const diverse = remaining.findIndex((signal) => signal.family != null && !usedFamilies.has(signal.family.id));
-    const signal = remaining.splice(diverse >= 0 ? diverse : 0, 1)[0];
+    const unused = (signal: Signal) => !signal.tag || !usedTags.has(signal.tag.toLowerCase());
+    const diverse = remaining.findIndex((signal) => unused(signal) && signal.family != null && !usedFamilies.has(signal.family.id));
+    const fresh = remaining.findIndex(unused);
+    if (fresh < 0) break;
+    const signal = remaining.splice(diverse >= 0 ? diverse : fresh, 1)[0];
     if (signal.family) usedFamilies.add(signal.family.id);
+    if (signal.tag) usedTags.add(signal.tag.toLowerCase());
     const preferred = openSlots.find((slot) => !slot.used && (slot.slot.prefer.length === 0 || slot.slot.prefer.includes(signal.bias)));
     const any = openSlots.find((slot) => !slot.used);
     const chosen = preferred ?? any;
@@ -357,7 +353,15 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     const slot = openSlots.find((item) => !item.used) ?? openSlots[draft.length % openSlots.length];
     if (slot) slot.used = true;
     const kind = slot?.slot.kind ?? "pendant";
-    const citation = cite(lead.entity, `Second ${prettyKind(kind)} from the same Qloo row, because the graph only offered one signal.`, lead.tag);
+    const nextTag = lead.entity.tags.map((tag) => tag.name).find((name) => !usedTags.has(name.toLowerCase())) ?? null;
+    if (nextTag) usedTags.add(nextTag.toLowerCase());
+    const citation = cite(
+      lead.entity,
+      nextTag
+        ? `Second ${prettyKind(kind)} from ${lead.entity.name}, cited from “${nextTag}”.`
+        : `Second ${prettyKind(kind)} from ${lead.entity.name}, because the graph only offered one signal.`,
+      nextTag,
+    );
     citation.affinity = lead.affinity;
     draft.push({
       weight: lead.weight * 0.5,
@@ -370,7 +374,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
         color: hslToHex((lead.hue + 28) % 360, Math.max(18, lead.sat - 10), day ? 46 : 42),
         intensity: 0.4,
         flicker: 0.08,
-        label: (lead.tag ?? lead.entity.name).slice(0, 80),
+        label: (nextTag ?? lead.entity.name).slice(0, 80),
         citation,
       },
     });
@@ -648,7 +652,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     room: {
       plan: planId,
       window,
-      timeLabel: TIME_LABEL[window],
+      timeLabel: labelForScene(scene),
       windowBox: plan.windowBox,
       posterBox: plan.posterBox,
       lights,

@@ -57,6 +57,8 @@ export type CompileResult = {
   baseline: PlainRoom;
   comparison: Comparison;
   diagnostics: CompileDiagnostics;
+  /** Wall-clock time for this compile, including Qloo and the plain reading. */
+  elapsedMs: number;
 };
 
 export type CompileDiagnostics = {
@@ -86,6 +88,7 @@ export async function compileFromPrompt(
     onStatus?: (message: string) => void;
   },
 ): Promise<CompileResult> {
+  const started = Date.now();
   const cleaned = prompt.replace(/[\u0000-\u001F\u007F]/g, " ").trim().replace(/\s+/g, " ");
   if (cleaned.length < 3) throw new PromptError("Give the room a cultural prompt of at least a few words.");
   if (cleaned.length > 400) throw new PromptError("Keep the prompt under 400 characters.");
@@ -216,6 +219,7 @@ export async function compileFromPrompt(
     steps,
     baseline,
     comparison,
+    elapsedMs: Date.now() - started,
     diagnostics,
   };
 }
@@ -438,6 +442,18 @@ function tagFitsPrompt(prompt: string, tag: TasteTag): boolean {
   return tokens(tag.name).some((token) => promptTokens.has(token));
 }
 
+function uniqueTagNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const name of names) {
+    const key = name.trim().toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(name.trim());
+  }
+  return out;
+}
+
 function toView(entity: TasteEntity): EntityView {
   return {
     id: entity.id,
@@ -447,7 +463,7 @@ function toView(entity: TasteEntity): EntityView {
     imageUrl: entity.imageUrl,
     popularity: entity.popularity,
     affinity: entity.affinity,
-    tags: entity.tags.map((tag) => tag.name),
+    tags: uniqueTagNames(entity.tags.map((tag) => tag.name)),
     explainers: entity.explainers,
     mock: entity.mock,
   };
