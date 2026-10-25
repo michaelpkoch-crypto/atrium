@@ -213,9 +213,9 @@ export function AtriumApp() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[#0c0b0a] text-[#f4efe6]">
       <div id="prompt-bar" className="z-40 shrink-0 border-b border-white/10 bg-[#0c0b0a]">
-        <header className="flex items-center justify-between gap-3 px-4 pt-2 pb-1 sm:px-6">
+        <header className="flex items-center justify-between gap-3 px-2 pt-1.5 pb-0.5 sm:px-6 sm:pt-2 sm:pb-1">
           <div>
-            <p className="font-display text-2xl tracking-tight sm:text-3xl">Atrium</p>
+            <p className="font-display text-xl tracking-tight sm:text-3xl">Atrium</p>
             <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room · MIT License</p>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -234,7 +234,7 @@ export function AtriumApp() {
             )}
           </div>
         </header>
-        <div className="px-4 pb-3 sm:px-6">
+        <div className="px-2 pb-2 sm:px-6 sm:pb-3">
           <PromptDock prompt={prompt} loading={loading} hasRoom={Boolean(result)} onPrompt={setPrompt} onSubmit={compile} />
         </div>
       </div>

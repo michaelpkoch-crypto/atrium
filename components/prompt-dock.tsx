@@ -37,19 +37,23 @@ export function PromptDock({
       >
         Cultural prompt
       </label>
-      <div className="flex flex-col gap-1.5 sm:flex-row sm:gap-2">
+      <div className={hasRoom ? "flex flex-row gap-1 sm:gap-2" : "flex flex-col gap-1.5 sm:flex-row sm:gap-2"}>
         <Input
           id="cultural-prompt"
           value={prompt}
           onChange={(event) => onPrompt(event.target.value)}
           placeholder="Blade Runner meets a 1970s jazz bar"
           maxLength={400}
-          className="h-11 w-full min-w-0 border-white/20 bg-black/45 px-4 text-base text-white placeholder:text-white/70 sm:h-12 sm:flex-1"
+          className="h-11 w-full min-w-0 flex-1 border-white/20 bg-black/45 px-2 text-base text-white placeholder:text-white/70 sm:h-12 sm:px-4"
         />
         <Button
           type="submit"
           disabled={loading || prompt.trim().length < 3}
-          className="h-9 w-full bg-white text-black hover:bg-white/90 focus:shadow-[0_0_0_3px_#f5d90a] sm:h-12 sm:w-auto sm:px-4"
+          className={
+            hasRoom
+              ? "h-11 shrink-0 bg-white px-2 text-black hover:bg-white/90 focus:shadow-[0_0_0_3px_#f5d90a] sm:h-12 sm:px-4"
+              : "h-9 w-full bg-white text-black hover:bg-white/90 focus:shadow-[0_0_0_3px_#f5d90a] sm:h-12 sm:w-auto sm:px-4"
+          }
         >
           {loading ? <LoaderCircle className="animate-spin" /> : null}
           <span className="sm:hidden">Compile</span>
