@@ -210,7 +210,7 @@ export function AtriumApp() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[#0c0b0a] text-[#f4efe6]">
       <div id="prompt-bar" className="z-40 shrink-0 border-b border-white/10 bg-[#0c0b0a]">
-        <header className="flex items-center justify-between gap-3 px-4 pt-3 pb-1 sm:px-6">
+        <header className="flex items-center justify-between gap-3 px-4 pt-2 pb-1 sm:px-6">
           <div>
             <p className="font-display text-2xl tracking-tight sm:text-3xl">Atrium</p>
             <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room · MIT License</p>
