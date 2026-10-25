@@ -1,3 +1,5 @@
+import type { SceneMood } from "@/lib/agent/propose";
+
 /** Normalized taste-graph records. Field names are ours; the live client maps Qloo's payload into this shape. */
 
 export type TasteTag = {
@@ -46,6 +48,8 @@ export type TasteGraph = {
   signalEntityIds: string[];
   /** Tag ids actually sent as `signal.interests.tags`. */
   signalTagIds: string[];
+  /** Prompt time of day. Qloo tags color the room inside this scene. */
+  scene?: SceneMood;
 };
 
 export type QlooTraceCall = {
@@ -55,6 +59,8 @@ export type QlooTraceCall = {
   status: number;
   resultCount: number;
   mocked: boolean;
+  /** True when this row was served from the instance cache, not a new HTTP call. */
+  cached?: boolean;
   error?: string;
 };
 

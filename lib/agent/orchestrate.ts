@@ -3,8 +3,9 @@ import { compileAtmosphere } from "@/lib/atmosphere/compile";
 import type { Atmosphere } from "@/lib/atmosphere/schema";
 import { readConfig, type AppConfig, type DispatchMode } from "@/lib/config";
 import { NoTasteMatch, PromptError } from "@/lib/agent/errors";
-import { knownProposal } from "@/lib/agent/propose";
+import { knownProposal, sceneFromPrompt } from "@/lib/agent/propose";
 import { assembleGraph } from "@/lib/agent/assemble";
+import { scheduleSampleWarmup } from "@/lib/qloo/warm";
 import { extractQueries, nameScore, tagAccepts, tagQueriesFor, tokens } from "@/lib/agent/queries";
 import { relevantPlaces, rescuePlaces } from "@/lib/agent/rank";
 import type { AgentStep } from "@/lib/agent/steps";
@@ -186,6 +187,11 @@ export async function compileFromPrompt(
       ),
     );
   }
+  const trace = client.trace.map((call) => ({
+    ...call,
+    error: call.error ? redactSecrets(call.error, secrets) : undefined,
+  }));
+  scheduleSampleWarmup(client);
   return {
     atmosphere,
     graph: {
@@ -199,10 +205,7 @@ export async function compileFromPrompt(
       movies: graph.movies.map(toView),
       tags: graph.tags,
     },
-    trace: client.trace.map((call) => ({
-      ...call,
-      error: call.error ? redactSecrets(call.error, secrets) : undefined,
-    })),
+    trace,
     agent,
     dispatchPlan: {
       mode: config.dispatch.mode,
@@ -420,6 +423,7 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
       tags,
       signalEntityIds: entityIds,
       signalTagIds: tagIds,
+      scene: sceneFromPrompt(prompt),
     },
     steps,
   };
@@ -481,6 +485,7 @@ function syntheticGraph(prompt: string): TasteGraph {
     tags: motifTags,
     signalEntityIds: [seedId],
     signalTagIds: motifTags.map((tag) => tag.id),
+    scene: sceneFromPrompt(prompt),
   };
 }
 

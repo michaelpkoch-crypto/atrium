@@ -228,6 +228,7 @@ function RoomDossier({
                 {call.mocked ? "MOCK" : call.status}
               </span>{" "}
               GET {call.path}?{new URLSearchParams(call.query).toString()} → {call.resultCount} rows
+              {call.cached ? " · cached" : ""}
               {call.error ? ` · ${call.error}` : ""}
             </li>
           ))}

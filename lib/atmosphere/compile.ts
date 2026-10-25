@@ -1,5 +1,7 @@
 import { hslToHex, hashString } from "@/lib/atmosphere/color";
+import { pourFor } from "@/lib/atmosphere/drinks";
 import { matchFamily, type Family, type LightBias, type PlanId, type ScaleName, type TextureKind, type WindowScene } from "@/lib/atmosphere/families";
+import { sceneFromPrompt, type SceneMood } from "@/lib/agent/propose";
 import { PLANS, type ObjectKind, type ObjectRole, type ObjectSlot } from "@/lib/atmosphere/plans";
 import { atmosphereSchema, type Atmosphere, type Citation, type VisualMode } from "@/lib/atmosphere/schema";
 import type { TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
@@ -24,18 +26,6 @@ const RATIOS: Record<ScaleName, number[]> = {
   phrygian: [1, 16 / 15, 4 / 3, 3 / 2, 9 / 5],
   mixolydian: [1, 9 / 8, 5 / 4, 3 / 2, 5 / 3],
 };
-
-const DRINK_RULES: { keys: string[]; name: string }[] = [
-  { keys: ["kissaten", "whiskey", "whisky"], name: "Whiskey highball" },
-  { keys: ["whiskey", "whisky", "jazz", "lounge", "vinyl"], name: "Rye old fashioned" },
-  { keys: ["brunch", "pastry", "pastel"], name: "Grapefruit spritz" },
-  { keys: ["cafe", "coffee", "tea"], name: "Cardamom cortado" },
-  { keys: ["disco", "funk"], name: "Campari soda" },
-  { keys: ["noodles"], name: "Cold barley tea" },
-  { keys: ["cocktail", "bar"], name: "Smoked mezcal soda" },
-  { keys: ["bathhouse", "tea", "ghibli"], name: "Hojicha" },
-  { keys: ["brutalist", "concrete"], name: "Black coffee" },
-];
 
 const TIME_LABEL: Record<WindowScene, string> = {
   "night-city": "Night",
@@ -72,15 +62,6 @@ const FILTER: Record<TextureKind, number> = {
   air: 900,
   steam: 1100,
 };
-
-function tokenSet(value: string): Set<string> {
-  return new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
-}
-
-function matches(text: string, words: Set<string>, key: string): boolean {
-  if (key.includes(" ")) return text.includes(key);
-  return words.has(key);
-}
 
 function dedupe(entities: TasteEntity[]): TasteEntity[] {
   const map = new Map<string, TasteEntity>();
@@ -154,11 +135,6 @@ export function affinityWhy(entity: TasteEntity, seeds: TasteEntity[]): string {
     : `Affinity ${affinity} from the tag signals passed to /v2/insights.`;
 }
 
-function entityText(entity: TasteEntity): { text: string; words: Set<string> } {
-  const text = `${entity.name} ${entity.tags.map((tag) => tag.name).join(" ")}`.toLowerCase();
-  return { text, words: tokenSet(text) };
-}
-
 function collectSignals(pool: TasteEntity[], tags: TasteTag[], seedIds: Set<string>): Signal[] {
   const best = new Map<string, Signal>();
   const consider = (entity: TasteEntity, tag: { id: string; name: string } | null, affinity: number | null) => {
@@ -205,6 +181,14 @@ function isSetting(signal: Signal, seedIds: Set<string>): boolean {
   if (seedIds.has(signal.entity.id)) return true;
   const type = signal.entity.type;
   return type.includes("place") || type.includes("book") || type.includes("movie") || type.includes("tv");
+}
+
+function windowFor(scene: SceneMood, family: Family | null): WindowScene {
+  if (scene.time === "day") return family?.plan === "brutalist" ? "day-concrete" : "day-pastel";
+  if (scene.time === "dusk") return "dusk";
+  if (scene.weather === "rain") return "rain";
+  if (family?.id === "neon" || family?.window === "neon-city") return "neon-city";
+  return "night-city";
 }
 
 function dominantFamily(signals: Signal[]): Family | null {
@@ -317,14 +301,18 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
   const signals = collectSignals(pool, graph.tags, seedIds);
   const shell = signals.filter((signal) => isSetting(signal, seedIds));
   const family = dominantFamily(shell.some((signal) => signal.family) ? shell : signals);
-  const planId: PlanId = family?.plan ?? "living";
+  const scene = graph.scene ?? sceneFromPrompt(prompt);
+  const planId: PlanId = scene.time === "day" && family?.plan === "neon" ? "living" : (family?.plan ?? "living");
   const plan = PLANS[planId];
-  const rainy = shell.some((signal) => signal.family?.id === "rain" && signal.weight >= 0.75);
-  const window: WindowScene = rainy ? "rain" : (family?.window ?? "night-city");
+  const window = windowFor(scene, family);
   const mode: VisualMode =
-    family?.mode ??
-    (["grain-warm", "paper", "rain", "neon-grid", "symmetry", "brutalist"] as const)[hashString(anchor.id) % 6];
-  const day = window === "day-pastel" || window === "day-concrete";
+    scene.time === "day"
+      ? family?.mode === "symmetry"
+        ? "symmetry"
+        : "paper"
+      : (family?.mode ??
+        (["grain-warm", "paper", "rain", "neon-grid", "symmetry", "brutalist"] as const)[hashString(anchor.id) % 6]);
+  const day = scene.brightness === "bright" || window === "day-pastel" || window === "day-concrete";
 
   const openSlots = plan.lights.map((slot, index) => ({ slot, index, used: false }));
   const draft: { weight: number; light: Atmosphere["room"]["lights"][number] }[] = [];
@@ -502,8 +490,14 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     citation: displayCitation,
   };
 
-  const textureSignal = signals.find((signal) => signal.family && signal.family.texture !== "air") ?? lead;
-  const texture: TextureKind = textureSignal?.family?.texture ?? "air";
+  const textured = signals.filter((signal) => signal.family && signal.family.texture !== "air");
+  const textureSignal =
+    textured.find((signal) => signal.family?.texture === "steam" && /bath|steam|tea|hojicha/i.test(signal.tag ?? signal.entity.name)) ??
+    textured[0] ??
+    lead;
+  let texture: TextureKind = textureSignal?.family?.texture ?? "air";
+  if (scene.weather === "rain" && scene.time !== "day") texture = "rain";
+  else if (scene.time === "day" && (texture === "rain" || texture === "steam")) texture = "air";
   const timed = signals.filter((signal) => signal.family);
   const tempo = timed.length
     ? clamp(
@@ -547,18 +541,15 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
   const drinks: Atmosphere["drinks"] = [];
   const drinkNames = new Set<string>();
   for (const place of places.slice(0, 4)) {
-    const { text, words } = entityText(place);
-    let best: { name: string; hits: number; key: string } | null = null;
-    for (const rule of DRINK_RULES) {
-      const hit = rule.keys.find((key) => matches(text, words, key));
-      const hits = rule.keys.filter((key) => matches(text, words, key)).length;
-      if (hit && hits > 0 && (!best || hits > best.hits)) best = { name: rule.name, hits, key: hit };
-    }
+    const best = pourFor(place.name, place.tags.map((tag) => tag.name), prompt);
     if (!best) continue;
     const nameKey = best.name.toLowerCase();
     if (drinkNames.has(nameKey)) continue;
     drinkNames.add(nameKey);
-    const because = `${best.hits} tag${best.hits === 1 ? "" : "s"} on ${place.name}, including “${best.key}”, selected ${best.name}.`;
+    const because =
+      best.from === "place"
+        ? `The tags on ${place.name} include “${best.key}”, so the counter pours ${best.name}.`
+        : `The prompt asks for ${best.key}, so the counter pours ${best.name}.`;
     drinks.push({
       name: best.name,
       venue: place.name,

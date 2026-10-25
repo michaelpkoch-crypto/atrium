@@ -364,8 +364,9 @@ function FloorSheen({ lights }: { lights: RoomLight[] }) {
 }
 
 function AtmosphereBits({ scene }: { scene: RoomScene }) {
-  const rain = scene.window === "rain" || scene.window === "neon-city" || scene.plan === "neon";
-  const steam = scene.plan === "bath" || scene.window === "dusk";
+  const day = scene.window === "day-pastel" || scene.window === "day-concrete";
+  const rain = !day && (scene.window === "rain" || scene.window === "neon-city" || scene.plan === "neon");
+  const steam = !day && (scene.plan === "bath" || scene.window === "dusk");
   return (
     <g pointerEvents="none">
       {rain ? <RainRoom /> : <Dust />}

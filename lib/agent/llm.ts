@@ -4,7 +4,7 @@ import { createGateway, generateText, Output } from "ai";
 import { z } from "zod";
 
 import { assembleGraph } from "@/lib/agent/assemble";
-import { knownProposal, resolveProposal, type PersonKind, type Proposal, type WorkKind } from "@/lib/agent/propose";
+import { knownProposal, resolveProposal, tagFitsMood, type PersonKind, type Proposal, type WorkKind } from "@/lib/agent/propose";
 import type { AgentStep } from "@/lib/agent/steps";
 import type { LlmConfig } from "@/lib/config";
 import type { TasteClient, TasteGraph } from "@/lib/qloo/types";
@@ -28,14 +28,26 @@ const proposalSchema = z.object({
   moodTags: z.array(z.string()),
   rejectTags: z.array(z.string()),
   city: z.string(),
+  time: z.string(),
+  weather: z.string(),
+  brightness: z.string(),
   reason: z.string(),
 });
 
-const PROPOSE_HINT = `Name the real works and people. Examples:
-Studio Ghibli bathhouse at dusk → workNames Spirited Away, My Neighbor Totoro; kinds movie, movie; personNames Joe Hisaishi, Hayao Miyazaki; kinds artist, person; placeQueries onsen, sento; placeTags bathhouse, onsen; moodTags anime, dusk; rejectTags horror, haunted, metal; city empty.
-a Wes Anderson brunch → The Grand Budapest Hotel, The Royal Tenenbaums; movies; Wes Anderson person; Alexandre Desplat artist; placeQueries patisserie; placeTags cafe, brunch.
-reading Murakami on a rainy night → Norwegian Wood, Kafka on the Shore; books; Haruki Murakami person; Bill Evans artist; placeQueries jazz kissa, kissaten; placeTags cafe, jazz; city Tokyo.
-Blade Runner meets a 1970s jazz bar → Blade Runner movie; Vangelis artist; placeQueries jazz bar, jazz club; placeTags jazz, bar; rejectTags brutal death.
+const tagVerdictSchema = z.object({
+  keep: z.array(z.string()),
+});
+
+const PROPOSE_HINT = `Name the real works and people. Also set the scene from the prompt, not from a guess about the genre.
+time is day, dusk, or night. weather is clear or rain. brightness is bright or dim.
+Brunch, a garden, and a tea party are time day and brightness bright. Dusk is dusk. 2am, midnight, and night are time night. Rain in the prompt is weather rain.
+Examples:
+Studio Ghibli bathhouse at dusk → workNames Spirited Away, My Neighbor Totoro; kinds movie, movie; personNames Joe Hisaishi, Hayao Miyazaki; kinds artist, person; placeQueries onsen, sento; placeTags bathhouse, onsen; moodTags anime, dusk; rejectTags horror, haunted, metal; time dusk; weather clear; brightness dim.
+a Wes Anderson brunch → The Grand Budapest Hotel, The Royal Tenenbaums; movies; Wes Anderson person; Alexandre Desplat artist; placeQueries patisserie; placeTags brunch, pastry; time day; brightness bright; weather clear; rejectTags noir, horror.
+reading Murakami on a rainy night → Norwegian Wood, Kafka on the Shore; books; Haruki Murakami person; Bill Evans artist; placeQueries jazz kissa, kissaten; placeTags kissaten; city Tokyo; time night; weather rain.
+Blade Runner meets a 1970s jazz bar → Blade Runner movie; Vangelis artist; placeQueries jazz bar, jazz club; placeTags jazz; rejectTags brutal death; time night; weather clear.
+Tarantino road trip diner at 2am → Pulp Fiction, Reservoir Dogs; movies; Quentin Tarantino person; Ennio Morricone artist; placeQueries diner; placeTags diner; time night; brightness dim; rejectTags brutality, bathroom, warehouse.
+Bridgerton garden tea party → Bridgerton; kind tv; placeQueries tea room, garden; placeTags tea, garden; time day; brightness bright; rejectTags poetry, horror.
 workKinds values are movie, tv, or book. personKinds values are person or artist. city is empty when the prompt has no city.`;
 
 export type ModelDiagnostics = {
@@ -102,8 +114,20 @@ export async function compileWithModel(args: {
     },
   };
 
-  const graph = earlyGraph ?? (await assembleGraph(args.client, args.prompt, proposal, steps));
+  let graph = earlyGraph ?? (await assembleGraph(args.client, args.prompt, proposal, steps));
   if (graph) {
+    const judged = await judgeTags(args.prompt, proposal, graph, args.llm, secrets);
+    if (judged) {
+      graph = judged.graph;
+      if (judged.dropped.length) {
+        steps.push({
+          why: "These tags fight the prompt, so they do not color the lamps or the room tone.",
+          call: "reject_tags",
+          detail: args.llm.modelId,
+          result: judged.dropped.slice(0, 8).join(", "),
+        });
+      }
+    }
     diagnostics.candidates = graph.seeds.map((seed) => ({
       id: seed.id,
       name: seed.name,
@@ -173,6 +197,9 @@ function parseProposal(text: string): Proposal | null {
       moodTags: asList(value.moodTags),
       rejectTags: asList(value.rejectTags),
       city: typeof value.city === "string" ? value.city : "",
+      time: typeof value.time === "string" ? value.time : "",
+      weather: typeof value.weather === "string" ? value.weather : "",
+      brightness: typeof value.brightness === "string" ? value.brightness : "",
       reason: typeof value.reason === "string" ? value.reason : "",
     });
     if (!parsed.success) return null;
@@ -200,7 +227,75 @@ function zipProposal(value: z.infer<typeof proposalSchema>): Proposal | null {
     moodTags: value.moodTags.map((item) => item.trim()).filter(Boolean).slice(0, 6),
     rejectTags: value.rejectTags.map((item) => item.trim()).filter(Boolean).slice(0, 8),
     city: value.city.trim(),
+    scene: {
+      time: value.time === "day" || value.time === "dusk" || value.time === "night" ? value.time : "night",
+      weather: value.weather === "rain" ? "rain" : "clear",
+      brightness: value.brightness === "bright" ? "bright" : "dim",
+    },
     reason: value.reason.trim() || "The model named the works this prompt refers to.",
+  };
+}
+
+async function judgeTags(
+  prompt: string,
+  proposal: Proposal,
+  graph: TasteGraph,
+  llm: LlmConfig,
+  secrets: string[],
+): Promise<{ graph: TasteGraph; dropped: string[] } | null> {
+  const names = uniqueNames(graph);
+  const ambiguous = names.filter((name) => !proposal.moodTags.some((mood) => mood.toLowerCase() === name.toLowerCase()) && !proposal.placeTags.some((mood) => mood.toLowerCase() === name.toLowerCase()));
+  if (!ambiguous.length) return null;
+  try {
+    const result = await generateText({
+      model: modelFor(llm),
+      temperature: 0,
+      maxOutputTokens: 200,
+      abortSignal: AbortSignal.timeout(2_000),
+      system: `${ORCHESTRATOR_RULES}\nYou are given tags already returned for a room. Reply with the subset that fits the prompt's mood. Drop brutality, bathrooms, warehouses, nordic noir, scandinavian literature, arabian baths, poetry, steamy romance, cyberpunk, and brutal death when the prompt is not that mood. Keep jazz, pastel, bathhouse, diner, tea, garden, and noir only when the prompt is actually that.`,
+      prompt: `Prompt: ${prompt}\nTags:\n${ambiguous.slice(0, 16).join("\n")}`,
+      output: Output.object({ schema: tagVerdictSchema, name: "tag_verdict", description: "Tags that fit the prompt." }),
+    });
+    const keep = result.output?.keep ?? [];
+    const keepSet = new Set(keep.map((name) => name.toLowerCase()));
+    const dropped = ambiguous.filter((name) => !keepSet.has(name.toLowerCase()));
+    if (!dropped.length) return { graph, dropped };
+    const allowed = (name: string) => {
+      if (proposal.moodTags.some((mood) => mood.toLowerCase() === name.toLowerCase())) return true;
+      if (proposal.placeTags.some((mood) => mood.toLowerCase() === name.toLowerCase())) return true;
+      if (!tagFitsMood(name, proposal)) return false;
+      return keepSet.has(name.toLowerCase());
+    };
+    return { graph: mapTags(graph, allowed), dropped };
+  } catch (error) {
+    console.error("[atrium] tag verdict failed:", clipError(error, secrets));
+    return null;
+  }
+}
+
+function uniqueNames(graph: TasteGraph): string[] {
+  const names = [
+    ...graph.tags.map((tag) => tag.name),
+    ...[...graph.seeds, ...graph.artists, ...graph.places, ...graph.books, ...graph.movies].flatMap((entity) => entity.tags.map((tag) => tag.name)),
+  ];
+  const out: string[] = [];
+  for (const name of names) {
+    if (name && !out.some((item) => item.toLowerCase() === name.toLowerCase())) out.push(name);
+  }
+  return out;
+}
+
+function mapTags(graph: TasteGraph, allowed: (name: string) => boolean): TasteGraph {
+  const trim = <T extends { tags: { name: string }[] }>(entity: T): T => ({ ...entity, tags: entity.tags.filter((tag) => allowed(tag.name)) });
+  return {
+    ...graph,
+    seeds: graph.seeds.map(trim),
+    artists: graph.artists.map(trim),
+    places: graph.places.map(trim),
+    brands: graph.brands.map(trim),
+    books: graph.books.map(trim),
+    movies: graph.movies.map(trim),
+    tags: graph.tags.filter((tag) => allowed(tag.name)),
   };
 }
 

@@ -1,5 +1,6 @@
 import { sanitizeEntityIds, sanitizeSearchQuery, sanitizeTagIds } from "@/lib/qloo/ids";
 import { qlooErrorMessage, normalizeEntity, normalizeTag, unwrapEntities, unwrapTags } from "@/lib/qloo/parse";
+import { backoffMs, cacheKey, holdQloo, readQlooCache, withQlooSlot, writeQlooCache } from "@/lib/qloo/traffic";
 import type { InsightTarget, QlooTraceCall, TasteClient, TasteEntity, TasteTag } from "@/lib/qloo/types";
 import { redactSecrets } from "@/lib/security/redact";
 
@@ -118,7 +119,7 @@ export class QlooClient implements TasteClient {
     }
     if (args.location && args.filterType === "urn:entity:place") query["filter.location.query"] = args.location;
 
-    const body = await this.get("/v2/insights", query, 0, args.timeoutMs ?? 6500);
+    const body = await this.get("/v2/insights", query, 0, args.timeoutMs ?? 6000);
     const signalIds = entityIds;
     const entities = unwrapEntities(body)
       .map((row) => normalizeEntity(row, false, signalIds))
@@ -134,47 +135,56 @@ export class QlooClient implements TasteClient {
     path: "/search" | "/v2/insights" | "/v2/tags",
     query: Record<string, string>,
     attempt = 0,
-    timeoutMs = 8000,
+    timeoutMs = 6000,
   ): Promise<unknown> {
+    const key = cacheKey(path, query);
+    const cached = readQlooCache(key);
+    if (cached !== undefined) {
+      const count = unwrapEntities(cached).length + unwrapTags(cached).length;
+      this.trace.push({ method: "GET", path, query, status: 200, resultCount: count, mocked: false, cached: true });
+      return cached;
+    }
+
     const url = new URL(this.options.baseUrl + path);
-    for (const [key, value] of Object.entries(query)) {
-      if (value) url.searchParams.set(key, value);
+    for (const [keyName, value] of Object.entries(query)) {
+      if (value) url.searchParams.set(keyName, value);
     }
 
     const fetchImpl = this.options.fetchImpl ?? fetch;
     let response: Response;
     try {
-      response = await fetchImpl(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-          "X-Api-Key": this.options.apiKey,
-        },
-        signal: AbortSignal.timeout(timeoutMs),
-        cache: "no-store",
-      });
+      response = await withQlooSlot(() =>
+        fetchImpl(url, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+            "X-Api-Key": this.options.apiKey,
+          },
+          signal: AbortSignal.timeout(timeoutMs),
+          cache: "no-store",
+        }),
+      );
     } catch (error) {
       const message = redactSecrets(error instanceof Error ? error.message : "Network error", [this.options.apiKey]);
       this.trace.push({ method: "GET", path, query, status: 0, resultCount: 0, mocked: false, error: message });
-      // A timeout already cost the whole budget. Retrying it is what stretched compiles past 15s.
+      // A timeout already spent the budget. Retrying it is a storm, not a recovery.
       if (attempt < 1 && !isTimeout(error)) {
-        await wait(350);
+        await wait(backoffMs(attempt, null));
         return this.get(path, query, attempt + 1, timeoutMs);
       }
       throw new QlooError(message, 0, path);
     }
 
-    if ((response.status === 429 || response.status >= 500) && attempt < 1) {
-      this.trace.push({
-        method: "GET",
-        path,
-        query,
-        status: response.status,
-        resultCount: 0,
-        mocked: false,
-        error: `Retrying after HTTP ${response.status}.`,
-      });
-      await wait(response.status === 429 ? 700 : 350);
+    if (response.status === 429 && attempt < 2) {
+      const waitMs = backoffMs(attempt, response.headers.get("retry-after"));
+      holdQloo(waitMs);
+      await wait(waitMs);
+      return this.get(path, query, attempt + 1, timeoutMs);
+    }
+    if (response.status >= 500 && attempt < 1) {
+      const waitMs = backoffMs(attempt, null);
+      holdQloo(waitMs);
+      await wait(waitMs);
       return this.get(path, query, attempt + 1, timeoutMs);
     }
 
@@ -189,8 +199,10 @@ export class QlooClient implements TasteClient {
     }
 
     if (response.status === 404 && (path === "/search" || path === "/v2/tags")) {
+      const empty = { results: [] };
+      writeQlooCache(key, empty);
       this.trace.push({ method: "GET", path, query, status: 404, resultCount: 0, mocked: false });
-      return { results: [] };
+      return empty;
     }
 
     if (!response.ok) {
@@ -214,6 +226,7 @@ export class QlooClient implements TasteClient {
 
     const count = unwrapEntities(body).length + unwrapTags(body).length;
     this.trace.push({ method: "GET", path, query, status: response.status, resultCount: count, mocked: false });
+    writeQlooCache(key, body);
     return body;
   }
 }

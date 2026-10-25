@@ -130,7 +130,7 @@ export function tagAccepts(query: string, name: string): boolean {
   return false;
 }
 
-const PLACE_PHRASES = ["jazz bar", "bathhouse", "kissaten", "coffee shop", "brunch", "cafe", "bar"];
+const PLACE_PHRASES = ["jazz bar", "jazz lounge", "bathhouse", "kissaten", "coffee shop", "brunch", "diner", "tea room", "tea party", "cafe", "bar"];
 
 /** Place-shaped phrases worth a typed place search when insights return no venue. */
 export function placeQueries(prompt: string): string[] {

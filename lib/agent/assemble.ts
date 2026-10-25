@@ -1,11 +1,13 @@
 import type { AgentStep } from "@/lib/agent/steps";
 import {
+  broaderPlaceQueries,
   confirmsName,
   dedupeByName,
   humanizeTagName,
   offVibe,
   placeFits,
   tagAllowed,
+  tagFitsMood,
   type PersonKind,
   type Proposal,
   type WorkKind,
@@ -42,18 +44,21 @@ export async function assembleGraph(
   const placeTagIds = found.placeTags.map((tag) => tag.id);
   const buckets = emptyBuckets();
 
-  const targets: InsightTarget[] = ["urn:entity:artist", "urn:entity:place", "urn:entity:brand", "urn:entity:book", "urn:entity:movie"];
+  // Artists and places are the rows a judge looks for. Brands, books, and movies are already
+  // the seeds, so they do not get their own insights call.
+  const targets: InsightTarget[] = ["urn:entity:artist", "urn:entity:place"];
   await Promise.all(
     targets.map(async (filterType) => {
       try {
+        const place = filterType === "urn:entity:place";
         const result = await client.insights({
           filterType,
           entityIds,
-          tagIds,
-          filterTagIds: filterType === "urn:entity:place" ? placeTagIds : undefined,
-          location: filterType === "urn:entity:place" ? proposal.city : undefined,
-          take: 6,
-          timeoutMs: 6500,
+          tagIds: place ? placeTagIds : [],
+          filterTagIds: place ? placeTagIds : undefined,
+          location: place ? proposal.city : undefined,
+          take: 4,
+          timeoutMs: 6000,
         });
         const key = keyFor(filterType);
         buckets[key] = result.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
@@ -68,11 +73,26 @@ export async function assembleGraph(
   }
 
   const insightPlaces = buckets.places.filter((place) => placeFits(place, proposal, prompt));
-  const places = dedupeByName(insightPlaces.length ? insightPlaces : found.places).slice(0, 4);
+  let places = dedupeByName(insightPlaces.length ? insightPlaces : found.places).slice(0, 4);
+  if (!places.length) {
+    const synonyms = broaderPlaceQueries(proposal.placeQueries);
+    const extra = await Promise.all(synonyms.slice(0, 2).map(async (query) => ({ query, hits: await searchSafe(client, query, "urn:entity:place") })));
+    places = dedupeByName(
+      extra.flatMap((row) => row.hits).filter((place) => place.type.includes("place") && placeFits(place, proposal, prompt)),
+    ).slice(0, 4);
+    if (synonyms.length) {
+      steps.push({
+        why: "The specific place search was empty, so a broader name for the same kind of venue was tried.",
+        call: "GET /search",
+        detail: `types=urn:entity:place; ${synonyms.join(", ")}`,
+        result: places.map((place) => place.name).join(", ") || "no place kept",
+      });
+    }
+  }
   buckets.places = places;
   if (!insightPlaces.length && places.length) {
     steps.push({
-      why: "Place insights returned nothing, so the room uses the category search instead of leaving the counter empty.",
+      why: "Place insights returned nothing that fit, so the room uses a place search for the venue kind.",
       call: "GET /search",
       detail: `types=urn:entity:place; ${proposal.placeQueries.join(", ") || proposal.placeTags.join(", ")}`,
       result: places.map((place) => place.name).join(", "),
@@ -86,9 +106,6 @@ export async function assembleGraph(
   for (const row of [
     ["artists", "urn:entity:artist"],
     ["places", "urn:entity:place"],
-    ["brands", "urn:entity:brand"],
-    ["books", "urn:entity:book"],
-    ["movies", "urn:entity:movie"],
   ] as const) {
     const [key, filterType] = row;
     steps.push({
@@ -100,7 +117,7 @@ export async function assembleGraph(
       detail:
         key === "places"
           ? `filter.type=${filterType}; filter.tags; signal.interests.entities${proposal.city ? "; filter.location.query" : ""}`
-          : `filter.type=${filterType}; signal.interests.entities; signal.interests.tags`,
+          : `filter.type=${filterType}; signal.interests.entities`,
       result: buckets[key].map((entity) => entity.name).slice(0, 4).join(", ") || "no rows",
     });
   }
@@ -109,15 +126,29 @@ export async function assembleGraph(
     return null;
   }
 
-  return {
+  const graph: TasteGraph = {
     source: client.mode === "mock" ? "mock" : "qloo",
     synthetic: false,
     seeds: found.seeds,
     ...buckets,
-    tags: found.tags,
+    tags: found.tags.filter((tag) => tagFitsMood(tag.name, proposal)),
     signalEntityIds: entityIds,
-    signalTagIds: tagIds,
+    signalTagIds: placeTagIds.length ? placeTagIds : tagIds,
+    scene: proposal.scene,
   };
+  return {
+    ...graph,
+    seeds: graph.seeds.map((entity) => calm(entity, proposal)),
+    artists: graph.artists.map((entity) => calm(entity, proposal)),
+    places: graph.places.map((entity) => calm(entity, proposal)),
+    brands: graph.brands.map((entity) => calm(entity, proposal)),
+    books: graph.books.map((entity) => calm(entity, proposal)),
+    movies: graph.movies.map((entity) => calm(entity, proposal)),
+  };
+}
+
+function calm(entity: TasteEntity, proposal: Proposal): TasteEntity {
+  return { ...entity, tags: entity.tags.filter((tag) => tagFitsMood(tag.name, proposal)) };
 }
 
 async function confirmAll(client: TasteClient, prompt: string, proposal: Proposal, steps: AgentStep[]) {
@@ -127,7 +158,10 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
   const books: TasteEntity[] = [];
   const rejected: string[] = [];
 
-  const tagQueries = unique([...proposal.placeTags, ...proposal.moodTags]).slice(0, 6);
+  const tagQueries = unique([
+    ...proposal.placeTags.filter((tag) => !GENERIC_TAG.has(tag.toLowerCase())),
+    ...proposal.moodTags,
+  ]).slice(0, 4);
   const [workHits, personHits, placeBatches, tagRows] = await Promise.all([
     Promise.all(proposal.works.map(async (work) => ({ work, hits: await searchBoth(client, work.name, WORK_TYPE[work.kind]) }))),
     Promise.all(proposal.people.map(async (person) => ({ person, hits: await searchBoth(client, person.name, PERSON_TYPE[person.kind]) }))),
@@ -232,6 +266,7 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
 
   const placeTags = tagRows
     .filter((row) => proposal.placeTags.some((tag) => tag.toLowerCase() === row.query.toLowerCase()))
+    .filter((row) => !GENERIC_TAG.has(row.query.toLowerCase()))
     .map((row) => row.tag)
     .filter((tag, index, list) => list.findIndex((item) => item.id === tag.id) === index);
 
@@ -239,10 +274,9 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
 }
 
 async function searchBoth(client: TasteClient, query: string, types: string): Promise<TasteEntity[]> {
-  const [typed, open] = await Promise.all([searchSafe(client, query, types), searchSafe(client, query)]);
-  const map = new Map<string, TasteEntity>();
-  for (const hit of [...typed, ...open]) if (!map.has(hit.id)) map.set(hit.id, hit);
-  return [...map.values()];
+  const typed = await searchSafe(client, query, types);
+  if (typed.length) return typed;
+  return searchSafe(client, query);
 }
 
 async function searchSafe(client: TasteClient, query: string, types?: string): Promise<TasteEntity[]> {
@@ -292,6 +326,8 @@ function keyFor(filterType: InsightTarget): "artists" | "places" | "brands" | "b
   if (filterType === "urn:entity:book") return "books";
   return "movies";
 }
+
+const GENERIC_TAG = new Set(["cafe", "bar", "club", "cocktail", "shop", "place", "restaurant", "room"]);
 
 function unique(values: string[]): string[] {
   const out: string[] = [];

@@ -4,6 +4,12 @@ import type { TasteEntity } from "@/lib/qloo/types";
 export type WorkKind = "movie" | "tv" | "book";
 export type PersonKind = "person" | "artist";
 
+export type SceneMood = {
+  time: "day" | "dusk" | "night";
+  weather: "clear" | "rain";
+  brightness: "bright" | "dim";
+};
+
 export type Proposal = {
   works: { name: string; kind: WorkKind }[];
   people: { name: string; kind: PersonKind }[];
@@ -12,6 +18,8 @@ export type Proposal = {
   moodTags: string[];
   rejectTags: string[];
   city: string;
+  /** Time of day, weather, and brightness come from the prompt. Qloo colors inside that scene. */
+  scene: SceneMood;
   reason: string;
 };
 
@@ -29,6 +37,7 @@ const GHIBLI: Proposal = {
   moodTags: ["anime", "ghibli", "dusk", "ambient"],
   rejectTags: ["horror", "haunted", "metal", "punk", "vinyl", "brutal death"],
   city: "",
+  scene: { time: "dusk", weather: "clear", brightness: "dim" },
   reason: "Studio Ghibli means the films. Spirited Away is the bathhouse, Joe Hisaishi is the score.",
 };
 
@@ -43,6 +52,7 @@ const BLADE: Proposal = {
   moodTags: ["jazz", "neon", "noir", "night"],
   rejectTags: ["brutal death", "death metal", "gore", "disco", "funk"],
   city: "",
+  scene: { time: "night", weather: "clear", brightness: "dim" },
   reason: "Blade Runner is the film. The 1970s half is a jazz bar, not a landmark.",
 };
 
@@ -58,8 +68,9 @@ const WES: Proposal = {
   placeQueries: ["patisserie", "brunch cafe"],
   placeTags: ["cafe", "brunch", "pastry"],
   moodTags: ["pastel", "symmetry", "brunch"],
-  rejectTags: ["punk", "metal", "horror"],
+  rejectTags: ["punk", "metal", "horror", "noir", "brutal", "arabian"],
   city: "",
+  scene: { time: "day", weather: "clear", brightness: "bright" },
   reason: "Wes Anderson means the films and a pastel cafe, not a place named Brunch.",
 };
 
@@ -75,8 +86,9 @@ const MURAKAMI: Proposal = {
   placeQueries: ["jazz kissa", "kissaten"],
   placeTags: ["cafe", "kissaten"],
   moodTags: ["rain", "jazz", "literature", "night"],
-  rejectTags: ["metal", "punk", "horror"],
+  rejectTags: ["metal", "punk", "horror", "cyberpunk"],
   city: "Tokyo",
+  scene: { time: "night", weather: "rain", brightness: "dim" },
   reason: "Murakami means the novels and a jazz kissa, not a landmark or a thermal bath.",
 };
 
@@ -101,8 +113,39 @@ export function genericProposal(prompt: string): Proposal {
     moodTags: tagQueriesFor(prompt, []),
     rejectTags: [],
     city: "",
+    scene: sceneFromPrompt(prompt),
     reason: "No canonical names were proposed, so the prompt itself was searched.",
   };
+}
+
+/** Daytime prompts stay bright even if a tag or a model guess says night. */
+export function sceneFromPrompt(prompt: string): SceneMood {
+  const text = prompt.toLowerCase();
+  const rain = /\b(rain|rainy|storm|monsoon|drizzle)\b/.test(text);
+  const day = /\b(brunch|tea party|garden party|garden tea|picnic|daytime|morning|lunch|afternoon)\b/.test(text);
+  const dusk = /\b(dusk|sunset|twilight|golden hour)\b/.test(text);
+  const night = /\b(night|midnight|2\s*am|after hours|neon)\b/.test(text);
+  if (day && !/\b(2\s*am|midnight)\b/.test(text)) {
+    return { time: "day", weather: "clear", brightness: "bright" };
+  }
+  if (/\b(2\s*am|midnight)\b/.test(text) || (night && !dusk)) {
+    return { time: "night", weather: rain ? "rain" : "clear", brightness: "dim" };
+  }
+  if (dusk) return { time: "dusk", weather: rain ? "rain" : "clear", brightness: "dim" };
+  if (rain) return { time: "night", weather: "rain", brightness: "dim" };
+  return { time: "night", weather: "clear", brightness: "dim" };
+}
+
+export function resolveScene(prompt: string, model: SceneMood | null): SceneMood {
+  const inferred = sceneFromPrompt(prompt);
+  const text = prompt.toLowerCase();
+  if (/\b(brunch|tea party|garden party|garden tea|picnic|daytime)\b/.test(text)) return inferred;
+  if (/\b(2\s*am|midnight)\b/.test(text)) return inferred;
+  if (!model) return inferred;
+  const time = model.time === "day" || model.time === "dusk" || model.time === "night" ? model.time : inferred.time;
+  const weather = inferred.weather === "rain" || model.weather === "rain" ? "rain" : "clear";
+  const brightness = time === "day" ? "bright" : model.brightness === "bright" ? "bright" : "dim";
+  return { time, weather, brightness };
 }
 
 /**
@@ -111,7 +154,10 @@ export function genericProposal(prompt: string): Proposal {
  */
 export function resolveProposal(prompt: string, model: Proposal | null): Proposal {
   const known = knownProposal(prompt);
-  if (!known) return clampProposal(model ?? genericProposal(prompt));
+  if (!known) {
+    const base = clampProposal(model ?? genericProposal(prompt));
+    return { ...base, scene: resolveScene(prompt, model?.scene ?? null) };
+  }
   if (!model) return known;
   const rejectTags = unique([...known.rejectTags, ...model.rejectTags.map(clean)]).slice(0, 8);
   const moodTags = unique([...known.moodTags, ...model.moodTags.map(clean)])
@@ -168,7 +214,54 @@ export function isLandmark(name: string): boolean {
   return LANDMARK.test(name);
 }
 
-const GENERIC_CATEGORY = new Set(["cafe", "bar", "club", "shop", "place", "restaurant", "venue", "counter", "room"]);
+const GENERIC_CATEGORY = new Set([
+  "cafe",
+  "bar",
+  "club",
+  "shop",
+  "place",
+  "restaurant",
+  "venue",
+  "counter",
+  "room",
+  "cocktail",
+  "nightlife",
+  "sky",
+  "rooftop",
+]);
+
+const PLACE_SYNONYMS: Record<string, string[]> = {
+  "jazz bar": ["jazz club", "jazz lounge"],
+  "jazz club": ["jazz lounge", "jazz bar"],
+  "jazz lounge": ["jazz bar", "jazz club"],
+  onsen: ["bathhouse", "sento"],
+  sento: ["bathhouse", "onsen"],
+  bathhouse: ["onsen", "sento"],
+  patisserie: ["bakery", "brunch cafe"],
+  "brunch cafe": ["patisserie", "bakery"],
+  diner: ["american diner", "roadside diner"],
+  "jazz kissa": ["kissaten", "jazz cafe"],
+  kissaten: ["jazz kissa", "coffee shop"],
+  "tea room": ["tea house", "garden cafe"],
+  "tea house": ["tea room", "garden cafe"],
+  garden: ["tea room", "garden cafe"],
+};
+
+/** Tried only after the specific place search and place insights come back empty. */
+export function broaderPlaceQueries(queries: string[]): string[] {
+  const seen = new Set(queries.map((query) => query.toLowerCase()));
+  const extra: string[] = [];
+  for (const query of queries) {
+    const direct = PLACE_SYNONYMS[query.toLowerCase()] ?? [];
+    const tokenHit = tokens(query).flatMap((token) => PLACE_SYNONYMS[token] ?? []);
+    for (const next of [...direct, ...tokenHit]) {
+      if (seen.has(next.toLowerCase())) continue;
+      seen.add(next.toLowerCase());
+      extra.push(next);
+    }
+  }
+  return extra.slice(0, 3);
+}
 
 export function placeFits(place: TasteEntity, proposal: Proposal, prompt: string): boolean {
   if (promptEchoPlace(place.name, prompt) || isLandmark(place.name)) return false;
@@ -189,6 +282,18 @@ export function offVibe(entity: TasteEntity, proposal: Proposal): boolean {
   const rejected = proposal.rejectTags.some((reject) => mentions(blob, reject));
   if (!rejected) return false;
   return !proposal.moodTags.some((mood) => mentions(blob, mood));
+}
+
+/**
+ * Entity tags drive the lamps. A tag stays only when it shares a word with the
+ * mood or the place kind. Nordic Noir does not survive a pastel brunch.
+ */
+export function tagFitsMood(name: string, proposal: Proposal): boolean {
+  const human = humanizeTagName(name);
+  if (proposal.rejectTags.some((reject) => mentions(human, reject) || mentions(name, reject))) return false;
+  const allowed = [...proposal.moodTags, ...proposal.placeTags, ...proposal.placeQueries];
+  if (!allowed.length) return true;
+  return allowed.some((mood) => moodMatch(human, mood) || tokens(mood).some((token) => token.length > 3 && tokens(human).includes(token)));
 }
 
 /** A tag is kept only when it is one of the moods or place categories the proposal named. */
@@ -262,6 +367,7 @@ function clampProposal(proposal: Proposal): Proposal {
     moodTags: unique(proposal.moodTags).slice(0, 6),
     rejectTags: unique(proposal.rejectTags).slice(0, 8),
     city: proposal.city.trim(),
+    scene: proposal.scene ?? sceneFromPrompt(""),
     reason: proposal.reason.trim() || "The model named the works this prompt refers to.",
   };
 }

@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import { compileFromPrompt } from "@/lib/agent/orchestrate";
+import { pourFor } from "@/lib/atmosphere/drinks";
 import {
+  broaderPlaceQueries,
   confirmsName,
   humanizeTagName,
   isLandmark,
   knownProposal,
   placeFits,
   promptEchoPlace,
+  sceneFromPrompt,
   tagAllowed,
+  tagFitsMood,
 } from "@/lib/agent/propose";
 import { MockTasteClient } from "@/lib/qloo/mock";
 import type { TasteEntity } from "@/lib/qloo/types";
@@ -93,6 +97,48 @@ describe("seed proposals for the sample prompts", () => {
     expect(tagAllowed("Brutal death", proposal!)).toBe(false);
     expect(placeFits(place("Westfield World Trade Center", ["mall"]), proposal!, "Blade Runner meets a 1970s jazz bar")).toBe(false);
     expect(placeFits(place("Sodium Lamp Bar", ["cocktail", "bar", "jazz"]), proposal!, "Blade Runner meets a 1970s jazz bar")).toBe(true);
+    expect(placeFits(place("Sky Garden", ["cocktail", "bar", "nightlife"]), proposal!, "Blade Runner meets a 1970s jazz bar")).toBe(false);
+  });
+
+  it("keeps brunch and a tea party in daylight and a 2am diner at night", () => {
+    expect(sceneFromPrompt("a Wes Anderson brunch")).toMatchObject({ time: "day", brightness: "bright", weather: "clear" });
+    expect(sceneFromPrompt("Bridgerton garden tea party")).toMatchObject({ time: "day", brightness: "bright" });
+    expect(sceneFromPrompt("Tarantino road trip diner at 2am").time).toBe("night");
+    expect(sceneFromPrompt("reading Murakami on a rainy night")).toMatchObject({ time: "night", weather: "rain" });
+    expect(sceneFromPrompt("Studio Ghibli bathhouse at dusk").time).toBe("dusk");
+    expect(knownProposal("a Wes Anderson brunch")?.scene.time).toBe("day");
+  });
+
+  it("drops tags that fight the prompt and pours from the place", () => {
+    const wes = knownProposal("a Wes Anderson brunch")!;
+    expect(tagFitsMood("Nordic Noir", wes)).toBe(false);
+    expect(tagFitsMood("Scandinavian literature", wes)).toBe(false);
+    expect(tagFitsMood("Arabian bath", wes)).toBe(false);
+    expect(tagFitsMood("Pastel", wes)).toBe(true);
+    const diner = {
+      ...wes,
+      placeQueries: ["diner"],
+      placeTags: ["diner"],
+      moodTags: ["noir", "night"],
+      rejectTags: ["brutality"],
+    };
+    expect(tagFitsMood("Bathroom", diner)).toBe(false);
+    expect(tagFitsMood("Toaster pastry", diner)).toBe(false);
+    expect(tagFitsMood("Abandoned warehouse", diner)).toBe(false);
+    expect(tagFitsMood("Brutality", diner)).toBe(false);
+    expect(tagFitsMood("Film noir", diner)).toBe(true);
+    const murakami = knownProposal("reading Murakami on a rainy night")!;
+    expect(tagFitsMood("Brain", murakami)).toBe(false);
+    expect(tagFitsMood("Cyberpunk", murakami)).toBe(false);
+    expect(tagFitsMood("Brutal death", knownProposal("Blade Runner meets a 1970s jazz bar")!)).toBe(false);
+    expect(pourFor("Bathhouse Tea Counter", ["bathhouse", "tea"], "Studio Ghibli bathhouse at dusk")?.name).toBe("Hojicha");
+    expect(pourFor("Sky Garden", ["cocktail", "bar"], "Blade Runner meets a 1970s jazz bar")?.name).toBe("Gin martini");
+    expect(pourFor("Pink Linen Cafe", ["brunch", "pastry", "cafe"], "a Wes Anderson brunch")?.name).toBe("Grapefruit spritz");
+    expect(pourFor("Rain Window Kissaten", ["kissaten", "cafe"], "reading Murakami on a rainy night")?.name).toBe("Whiskey highball");
+    expect(pourFor("Mel's Diner", ["diner"], "Tarantino road trip diner at 2am")?.name).toBe("Bottomless coffee");
+    expect(pourFor("Garden Tea Room", ["tea", "garden"], "Bridgerton garden tea party")?.name).toBe("Earl Grey");
+    expect(broaderPlaceQueries(["diner"])).toEqual(expect.arrayContaining(["american diner", "roadside diner"]));
+    expect(broaderPlaceQueries(["jazz bar"])).toEqual(expect.arrayContaining(["jazz club", "jazz lounge"]));
   });
 });
 
@@ -110,6 +156,7 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.drinks.map((drink) => drink.name)).toEqual(["Hojicha"]);
     expect(result.atmosphere.title).not.toMatch(/Studio 666|Bathhouse Studios/);
     expect(result.atmosphere.room.plan).toBe("bath");
+    expect(result.atmosphere.room.window).toBe("dusk");
     expect(result.comparison.headline).toMatch(/Qloo adds .+ The plain reading did not name them/);
     expect(result.comparison.qlooAdded.map((item) => item.label)).toEqual(expect.arrayContaining(["Joe Hisaishi", "Spirited Away"]));
     expect(result.steps[0]?.call).toBe("propose_seeds");
@@ -127,6 +174,8 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.graph.places.map((place) => place.name)).toEqual(["Pink Linen Cafe"]);
     expect(result.atmosphere.drinks.map((drink) => drink.name)).not.toContain("Cardamom cortado");
     expect(result.atmosphere.visual.mode).toBe("symmetry");
+    expect(result.atmosphere.room.window).toBe("day-pastel");
+    expect(result.atmosphere.room.timeLabel).toBe("Day");
   });
 
   it("compiles Murakami from the novels and a kissaten in Tokyo", async () => {
@@ -147,7 +196,8 @@ describe("mock rooms from canonical seeds", () => {
     const result = await compile("Blade Runner meets a 1970s jazz bar");
     const names = [...result.graph.seeds.map((seed) => seed.name), ...result.graph.artists.map((artist) => artist.name)];
     expect(names).toEqual(expect.arrayContaining(["Blade Runner", "Vangelis"]));
-    expect(result.graph.places.map((place) => place.name)).toEqual(expect.arrayContaining(["Sodium Lamp Bar", "The Low Room"]));
+    expect(result.graph.places.map((place) => place.name)).toContain("The Low Room");
+    expect(result.graph.places.map((place) => place.name).join(" ")).not.toMatch(/Sky Garden|Sodium Lamp/);
     expect(result.graph.places.map((place) => place.name).join(" ")).not.toMatch(/Westfield|World Trade/);
     expect(result.graph.tags.map((tag) => tag.name).join(" ")).not.toMatch(/Brutal death|brutal death/);
     expect(result.atmosphere.music.map((row) => row.name)).toContain("Vangelis");
