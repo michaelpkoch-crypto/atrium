@@ -1,5 +1,6 @@
 import { placeQueries, tagQueriesFor, tokens } from "@/lib/agent/queries";
-import type { TasteEntity } from "@/lib/qloo/types";
+import { matchFamily } from "@/lib/atmosphere/families";
+import type { TasteEntity, TasteTag } from "@/lib/qloo/types";
 
 export type WorkKind = "movie" | "tv" | "book";
 export type PersonKind = "person" | "artist";
@@ -74,6 +75,39 @@ const WES: Proposal = {
   reason: "Wes Anderson means the films and a pastel cafe, not a place named Brunch.",
 };
 
+const TARANTINO: Proposal = {
+  works: [
+    { name: "Pulp Fiction", kind: "movie" },
+    { name: "Reservoir Dogs", kind: "movie" },
+  ],
+  people: [
+    { name: "Quentin Tarantino", kind: "person" },
+    { name: "Ennio Morricone", kind: "artist" },
+  ],
+  placeQueries: ["diner", "american diner"],
+  placeTags: ["diner"],
+  moodTags: ["neon", "retro", "crime", "diner"],
+  rejectTags: ["brutality", "bathroom", "warehouse", "toaster", "gore"],
+  city: "",
+  scene: { time: "night", weather: "clear", brightness: "dim" },
+  reason: "A 2am Tarantino diner is Pulp Fiction and Reservoir Dogs, chrome and a jukebox, not a bathroom.",
+};
+
+const BRIDGERTON: Proposal = {
+  works: [
+    { name: "Bridgerton", kind: "tv" },
+    { name: "Pride and Prejudice", kind: "movie" },
+  ],
+  people: [{ name: "Vitamin String Quartet", kind: "artist" }],
+  placeQueries: ["tea room", "tea house"],
+  placeTags: ["tea", "garden"],
+  moodTags: ["regency", "romance", "pastel"],
+  rejectTags: ["poetry", "horror", "steamy"],
+  city: "",
+  scene: { time: "day", weather: "clear", brightness: "bright" },
+  reason: "Bridgerton is the show. Pride and Prejudice is the 2005 film. Vitamin String Quartet is the pop-cover quartet.",
+};
+
 const MURAKAMI: Proposal = {
   works: [
     { name: "Norwegian Wood", kind: "book" },
@@ -99,6 +133,8 @@ export function knownProposal(prompt: string): Proposal | null {
   if (/blade runner/.test(text)) return BLADE;
   if (/wes anderson|grand budapest|tenenbaums/.test(text)) return WES;
   if (/murakami|norwegian wood|kafka on the shore/.test(text)) return MURAKAMI;
+  if (/tarantino|pulp fiction|reservoir dogs/.test(text)) return TARANTINO;
+  if (/bridgerton/.test(text)) return BRIDGERTON;
   return null;
 }
 
@@ -172,16 +208,18 @@ export function resolveProposal(prompt: string, model: Proposal | null): Proposa
   };
 }
 
+const NAME_STOP = new Set(["the", "a", "an", "and", "of"]);
+
 export function confirmsName(query: string, name: string): boolean {
   const q = query.toLowerCase().trim();
   const n = name.toLowerCase().trim();
   if (!q || !n) return false;
   if (q === n) return true;
-  const qt = tokens(q);
+  const qt = tokens(q).filter((token) => !NAME_STOP.has(token));
   const nt = tokens(n);
   if (qt.length < 2 || !qt.every((token) => nt.includes(token))) return false;
-  const extra = nt.filter((token) => !qt.includes(token));
-  return extra.every((token) => token === "the");
+  const extra = nt.filter((token) => !qt.includes(token) && !NAME_STOP.has(token));
+  return extra.length === 0;
 }
 
 const GENERIC_PLACE = new Set([
@@ -199,11 +237,23 @@ const GENERIC_PLACE = new Set([
   "counter",
 ]);
 
+function fold(value: string): string {
+  return value.normalize("NFD").replace(/\p{M}/gu, "");
+}
+
+const GENERIC_VENUE = new Set(["garden", "garten", "jardin", "giardino"]);
+
+/** "Gården" is just Garden. A venue whose whole name is a category word is not a place. */
+export function genericVenueName(name: string): boolean {
+  const parts = tokens(fold(name)).filter((token) => !NAME_STOP.has(token));
+  return parts.length > 0 && parts.every((token) => GENERIC_VENUE.has(token));
+}
+
 /** A place whose only distinctive word is a word from the prompt ("Brunch", "Bathhouse Studios"). */
 export function promptEchoPlace(name: string, prompt: string): boolean {
-  const distinctive = tokens(name).filter((token) => token.length > 2 && !GENERIC_PLACE.has(token));
+  const distinctive = tokens(fold(name)).filter((token) => token.length > 2 && !GENERIC_PLACE.has(token));
   if (!distinctive.length) return true;
-  const promptTokens = new Set(tokens(prompt));
+  const promptTokens = new Set(tokens(fold(prompt)));
   return distinctive.every((token) => promptTokens.has(token));
 }
 
@@ -264,7 +314,7 @@ export function broaderPlaceQueries(queries: string[]): string[] {
 }
 
 export function placeFits(place: TasteEntity, proposal: Proposal, prompt: string): boolean {
-  if (promptEchoPlace(place.name, prompt) || isLandmark(place.name)) return false;
+  if (promptEchoPlace(place.name, prompt) || isLandmark(place.name) || genericVenueName(place.name)) return false;
   const blob = `${place.name} ${place.tags.map((tag) => humanizeTagName(tag.name)).join(" ")}`;
   const categories = [...proposal.placeTags, ...proposal.placeQueries].map(clean).filter(Boolean);
   if (!categories.length) return true;
@@ -294,6 +344,25 @@ export function tagFitsMood(name: string, proposal: Proposal): boolean {
   const allowed = [...proposal.moodTags, ...proposal.placeTags, ...proposal.placeQueries];
   if (!allowed.length) return true;
   return allowed.some((mood) => moodMatch(human, mood) || tokens(mood).some((token) => token.length > 3 && tokens(human).includes(token)));
+}
+
+/**
+ * Tags that may color a lamp. Mood matches stay. When those matches have no color prior,
+ * the entity's own aesthetic tags (neon, retro, crime) are kept so the room is not a hashed blue.
+ * Rejected vibes never come back.
+ */
+export function tagsForRoom(tags: TasteTag[], proposal: Proposal): TasteTag[] {
+  const kept = tags.filter((tag) => tagFitsMood(tag.name, proposal));
+  if (kept.some((tag) => matchFamily(tag.name))) return kept.slice(0, 8);
+  const extra = tags.filter(
+    (tag) => !kept.some((item) => item.id === tag.id) && !rejectedTag(tag.name, proposal) && matchFamily(tag.name),
+  );
+  return [...kept, ...extra].slice(0, 8);
+}
+
+function rejectedTag(name: string, proposal: Proposal): boolean {
+  const human = humanizeTagName(name);
+  return proposal.rejectTags.some((reject) => mentions(human, reject) || mentions(name, reject));
 }
 
 /** A tag is kept only when it is one of the moods or place categories the proposal named. */

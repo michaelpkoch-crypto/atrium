@@ -46,8 +46,8 @@ Studio Ghibli bathhouse at dusk → workNames Spirited Away, My Neighbor Totoro;
 a Wes Anderson brunch → The Grand Budapest Hotel, The Royal Tenenbaums; movies; Wes Anderson person; Alexandre Desplat artist; placeQueries patisserie; placeTags brunch, pastry; time day; brightness bright; weather clear; rejectTags noir, horror.
 reading Murakami on a rainy night → Norwegian Wood, Kafka on the Shore; books; Haruki Murakami person; Bill Evans artist; placeQueries jazz kissa, kissaten; placeTags kissaten; city Tokyo; time night; weather rain.
 Blade Runner meets a 1970s jazz bar → Blade Runner movie; Vangelis artist; placeQueries jazz bar, jazz club; placeTags jazz; rejectTags brutal death; time night; weather clear.
-Tarantino road trip diner at 2am → Pulp Fiction, Reservoir Dogs; movies; Quentin Tarantino person; Ennio Morricone artist; placeQueries diner; placeTags diner; time night; brightness dim; rejectTags brutality, bathroom, warehouse.
-Bridgerton garden tea party → Bridgerton; kind tv; placeQueries tea room, garden; placeTags tea, garden; time day; brightness bright; rejectTags poetry, horror.
+Tarantino road trip diner at 2am → Pulp Fiction, Reservoir Dogs; movies; Quentin Tarantino person; Ennio Morricone artist; placeQueries diner, american diner; placeTags diner; moodTags neon, retro, crime; time night; brightness dim; rejectTags brutality, bathroom, warehouse.
+Bridgerton garden tea party → Bridgerton tv; Pride and Prejudice movie; Vitamin String Quartet artist; placeQueries tea room, tea house; placeTags tea, garden; moodTags regency, romance, pastel; time day; brightness bright; rejectTags poetry, horror, steamy. A place named only Garden or Gården is not a venue.
 workKinds values are movie, tv, or book. personKinds values are person or artist. city is empty when the prompt has no city.`;
 
 export type ModelDiagnostics = {

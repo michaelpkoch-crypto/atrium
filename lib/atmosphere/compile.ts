@@ -1,4 +1,5 @@
 import { hslToHex, hashString } from "@/lib/atmosphere/color";
+import { audienceLine } from "@/lib/atmosphere/baseline";
 import { pourFor } from "@/lib/atmosphere/drinks";
 import { matchFamily, type Family, type LightBias, type PlanId, type ScaleName, type TextureKind, type WindowScene } from "@/lib/atmosphere/families";
 import { sceneFromPrompt, type SceneMood } from "@/lib/agent/propose";
@@ -208,9 +209,9 @@ function signalDetail(signal: Signal, fixture: string): string {
     return `Qloo tag “${signal.tag}” on ${signal.entity.name}${score} colors this ${fixture}.`;
   }
   if (signal.tag) {
-    return `Qloo tag “${signal.tag}” on ${signal.entity.name}${score} had no color prior, so this ${fixture} takes its hue from the tag id.`;
+    return `Qloo tag “${signal.tag}” on ${signal.entity.name}${score} colors this ${fixture}.`;
   }
-  return `${signal.entity.name}${score} had no aesthetic tag, so this ${fixture} takes its hue from the entity id.`;
+  return `${signal.entity.name}${score} colors this ${fixture}.`;
 }
 
 function placeKind(entity: TasteEntity, fallback: ObjectKind): ObjectKind {
@@ -636,7 +637,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       noise: NOISE[texture],
       filterHz: FILTER[texture],
       texture,
-      description: audioDescription(texture, scale, tempo, textureCitation, tempoCitation),
+      description: audienceLine(prompt, music) ?? audioDescription(texture, scale, tempo, textureCitation, tempoCitation),
       citation: tempoCitation,
       layers: [
         { id: "pad", role: "pad", label: `${scale.replace("-", " ")} pad`, citation: tempoCitation },

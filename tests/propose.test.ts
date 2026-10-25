@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { assembleGraph } from "@/lib/agent/assemble";
 import { compileFromPrompt } from "@/lib/agent/orchestrate";
 import { pourFor } from "@/lib/atmosphere/drinks";
 import {
@@ -13,6 +14,7 @@ import {
   sceneFromPrompt,
   tagAllowed,
   tagFitsMood,
+  tagsForRoom,
 } from "@/lib/agent/propose";
 import { MockTasteClient } from "@/lib/qloo/mock";
 import type { TasteEntity } from "@/lib/qloo/types";
@@ -45,6 +47,7 @@ describe("seed proposals for the sample prompts", () => {
     expect(confirmsName("Spirited Away", "Spirited Away")).toBe(true);
     expect(confirmsName("Blade Runner 2049", "Blade Runner")).toBe(false);
     expect(confirmsName("Blade Runner", "Blade Runner 2049")).toBe(false);
+    expect(confirmsName("Pride and Prejudice", "Pride & Prejudice")).toBe(true);
     expect(tagAllowed("The haunted house", proposal!)).toBe(false);
     expect(tagAllowed("Collecting vinyl", proposal!)).toBe(false);
     expect(tagAllowed("Bathhouse", proposal!)).toBe(true);
@@ -157,7 +160,9 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.title).not.toMatch(/Studio 666|Bathhouse Studios/);
     expect(result.atmosphere.room.plan).toBe("bath");
     expect(result.atmosphere.room.window).toBe("dusk");
-    expect(result.comparison.headline).toMatch(/Qloo adds .+ The plain reading did not name them/);
+    expect(result.comparison.headlines.length).toBeGreaterThanOrEqual(3);
+    expect(result.comparison.headlines.length).toBeLessThanOrEqual(5);
+    expect(result.comparison.qlooAdded.map((item) => item.detail).join(" ")).not.toMatch(/it assumed/);
     expect(result.comparison.qlooAdded.map((item) => item.label)).toEqual(expect.arrayContaining(["Joe Hisaishi", "Spirited Away"]));
     expect(result.steps[0]?.call).toBe("propose_seeds");
   });
@@ -202,5 +207,106 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.graph.tags.map((tag) => tag.name).join(" ")).not.toMatch(/Brutal death|brutal death/);
     expect(result.atmosphere.music.map((row) => row.name)).toContain("Vangelis");
     expect(result.atmosphere.room.plan).toBe("neon");
+  });
+
+  it("keeps Hisaishi and drops a film composer who shares no Ghibli tag", async () => {
+    const result = await compile("Studio Ghibli bathhouse at dusk");
+    expect(result.atmosphere.music.map((row) => row.name)).toContain("Joe Hisaishi");
+    expect(result.atmosphere.music.map((row) => row.name)).not.toContain("John Williams");
+  });
+
+  it("drops an unrelated singer beside Murakami", async () => {
+    const result = await compile("reading Murakami on a rainy night");
+    expect(result.atmosphere.music.map((row) => row.name)).toContain("Bill Evans");
+    expect(result.atmosphere.music.map((row) => row.name)).not.toContain("Sezen Aksu");
+  });
+
+  it("colors a Tarantino diner from neon, retro, and crime", async () => {
+    const result = await compile("Tarantino road trip diner at 2am");
+    expect(result.graph.seeds.map((seed) => seed.name)).toEqual(
+      expect.arrayContaining(["Pulp Fiction", "Reservoir Dogs", "Quentin Tarantino", "Ennio Morricone"]),
+    );
+    expect(result.graph.places.map((place) => place.name)).toContain("American Diner Dulwich");
+    expect(result.atmosphere.drinks.map((drink) => drink.name)).toContain("Bottomless coffee");
+    expect(result.atmosphere.room.timeLabel).toBe("Night");
+    expect(result.atmosphere.room.plan).toBe("lounge");
+    const cited = JSON.stringify(result.atmosphere.room.lights);
+    expect(cited).not.toMatch(/had no aesthetic tag/);
+    expect(cited).toMatch(/Retro|Crime|Diner|Chrome|Neon/);
+    const primary = result.atmosphere.palette.primary;
+    const red = Number.parseInt(primary.slice(1, 3), 16);
+    const blue = Number.parseInt(primary.slice(5, 7), 16);
+    expect(red).toBeGreaterThan(blue);
+  });
+
+  it("frames Bridgerton pop neighbors and drops a place named Gården", async () => {
+    const result = await compile("Bridgerton garden tea party");
+    expect(result.graph.seeds.map((seed) => seed.name)).toEqual(
+      expect.arrayContaining(["Bridgerton", "Pride & Prejudice", "Vitamin String Quartet"]),
+    );
+    expect(result.graph.places.map((place) => place.name).join(" ")).not.toMatch(/Gården/);
+    expect(result.graph.places.map((place) => place.name)).toContain("Tea Room Miami");
+    expect(result.atmosphere.drinks.map((drink) => drink.name)).toContain("Earl Grey");
+    expect(result.atmosphere.room.timeLabel).toBe("Day");
+    expect(result.atmosphere.audio.description).toBe(
+      "Qloo: Bridgerton fans lean Harry Styles and Olivia Rodrigo, so the pad is a string-quartet take on modern pop.",
+    );
+    expect(result.comparison.headlines[0]).toBe(result.atmosphere.audio.description);
+  });
+});
+
+describe("place insight budget", () => {
+  it("waits 15 seconds for places and 6 seconds for artists", async () => {
+    const calls: { filterType: string; timeoutMs?: number }[] = [];
+    const pulp: TasteEntity = {
+      id: "pulp",
+      name: "Pulp Fiction",
+      type: "urn:entity:movie",
+      description: null,
+      imageUrl: null,
+      popularity: null,
+      affinity: null,
+      tags: [{ id: "tag:crime", name: "Crime", type: "urn:tag" }],
+      explainers: [],
+      mock: true,
+    };
+    await assembleGraph(
+      {
+        mode: "mock",
+        trace: [],
+        async search(query: string) {
+          return query === "Pulp Fiction" ? [pulp] : [];
+        },
+        async searchTags() {
+          return [];
+        },
+        async insights(args) {
+          calls.push({ filterType: args.filterType, timeoutMs: args.timeoutMs });
+          return { entities: [], tags: [] };
+        },
+      },
+      "Tarantino road trip diner at 2am",
+      knownProposal("Tarantino road trip diner at 2am")!,
+      [],
+    );
+    expect(calls.find((call) => call.filterType === "urn:entity:place")?.timeoutMs).toBe(15_000);
+    expect(calls.find((call) => call.filterType === "urn:entity:artist")?.timeoutMs).toBe(6_000);
+  });
+});
+
+describe("sparse seed tags", () => {
+  it("keeps neon and crime when the mood phrase has no color prior", () => {
+    const proposal = knownProposal("a Wes Anderson brunch")!;
+    const tags = tagsForRoom(
+      [
+        { id: "1", name: "Moody cinematic lighting", type: "urn:tag" },
+        { id: "2", name: "Neon", type: "urn:tag" },
+        { id: "3", name: "Crime", type: "urn:tag" },
+        { id: "4", name: "Bathroom", type: "urn:tag" },
+      ],
+      { ...proposal, moodTags: ["moody cinematic lighting"], rejectTags: ["bathroom"], placeTags: [], placeQueries: [] },
+    );
+    expect(tags.map((tag) => tag.name)).toEqual(expect.arrayContaining(["Neon", "Crime"]));
+    expect(tags.map((tag) => tag.name)).not.toContain("Bathroom");
   });
 });

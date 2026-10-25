@@ -1,5 +1,7 @@
 # Atrium
 
+MIT License. See [LICENSE](LICENSE).
+
 Atrium turns a cultural prompt into a room. Qloo's taste graph decides the lamps, the furniture, the poster, and the sound. A second model call, with no Qloo tools, draws the obvious cliché of the same prompt so the difference is visible.
 
 The room is the product. Every light, object, and sound layer cites the Qloo entity or tag that earned it. Tap a lamp and the chip reads like: from Qloo tag "lo-fi" · affinity 0.82 · entity: Nujabes.
@@ -72,11 +74,14 @@ npm run lint
 
 The client does not call `/recommendations` or `/recs`.
 
-1. `GET /search?query=` resolves names in the prompt to entity ids. The agent searches one to three names, then `select_seeds` keeps the ones that match the prompt.
-2. `GET /v2/tags?filter.query=` resolves mood words to tag ids. Free text is never sent as a tag URN.
-3. `GET /v2/insights` runs once per domain (`artist`, `place`, `brand`, `book`, `movie`, and `urn:tag`) with `signal.interests.entities`, `signal.interests.tags` when tags resolved, and `feature.explainability=true`.
+1. `gpt-4.1-mini` names the works and the people (`propose_seeds`). For the sample prompts, and for a Tarantino diner or a Bridgerton tea, canonical names win.
+2. `GET /search` confirms those names. A hit is kept only when it is that name. Blade Runner 2049 is not Blade Runner.
+3. `GET /v2/tags` resolves the mood and place words to tag ids. Free text is never sent as a tag URN.
+4. `GET /v2/insights` runs for artists and for places, with `feature.explainability=true`. Place insights also send `filter.tags` (union) and, for Murakami, `filter.location.query=Tokyo`. Place insights are allowed 15 seconds. Artist insights and search stay on a short budget. A timeout is not retried.
 
-Those domains fill different channels. Artists set the tempo and the records. Places set the counter and the furniture. Brands, books, and movies fill the shelf and the wall poster. Tag names pick a color family. A tag the family table does not know still becomes a lamp: its hue is a hash of the tag id, and the chip says so.
+Calls share a queue of two. A 429 waits on `Retry-After` and is not listed unless the retry fails. Successful reads stay in an in-memory cache for 24 hours. The API key is not part of the cache key, and no Qloo payload is committed.
+
+Artists set the tempo. Places set the counter. Tag names pick a color family. When the kept tags have no color prior, the seeds' own tags (neon, retro, crime) color the lamps. The chip cites that tag.
 
 Auth is `X-Api-Key`. A 401 names the hackathon host. Personal data is not sent. The prompt is a cultural description, not a user profile. Results describe what groups tend to like.
 
@@ -92,15 +97,28 @@ With no model key, that side is a fixed cliché of the words in the prompt, and 
 
 ## A request, redacted
 
-This walkthrough uses the labeled fixture graph, the stand-in checked into `lib/qloo/fixtures.ts`. Live responses are not stored in the repo. The call shape is the same against `https://hackathon.api.qloo.com`.
+Live response bodies are not stored in the repo. The names below are the ones Preview returned for these prompts. The call shape is the same against `https://hackathon.api.qloo.com`.
 
-Prompt: `Blade Runner meets a 1970s jazz bar`.
+```
+POST /api/compile
+{ "prompt": "Blade Runner meets a 1970s jazz bar" }
 
-1. Search resolves the film. Seeds are entity ids, not the raw sentence.
-2. Tag search resolves mood words such as jazz. The client sends the returned tag id, not a URN built from the word.
-3. Insights for `urn:entity:artist` returns neighbors such as Vangelis from the film and Miles Davis, Alice Coltrane, and Bill Evans from the jazz signal. Place insights return a venue such as Sodium Lamp Bar. Brand, book, and movie insights fill the other shelves.
-4. The compiler paints a neon plan with a night city window. One lamp cites a neon tag. Another cites a jazz tag, so the room is not one cyan tube. The poster is drawn type for the film, not an entity photo. The bed is a pad, vinyl crackle from the jazz tag, and a pulse whose tempo is the weighted tag tempos.
-5. The plain call, given only the sentence, reaches for cyan rain and an unnamed saxophone. The diff names Vangelis and the bar.
+GET /search?query=Blade%20Runner&types=urn:entity:movie
+GET /search?query=Vangelis&types=urn:entity:artist
+GET /v2/tags?filter.query=jazz
+GET /v2/insights?filter.type=urn:entity:artist&signal.interests.entities=…
+GET /v2/insights?filter.type=urn:entity:place&filter.tags=…&operator.filter.tags=union
+```
+
+The room that came back: Blade Runner, Vangelis, a jazz bar (The Low Room on the fixture graph; a jazz bar or lounge on live, not a sky bar), a rye old fashioned, night. The plain reading stayed on cyan rain. The comparison names the bar and the composer in a few large lines. The row list is collapsed.
+
+Other live rooms from the same Preview pass:
+
+- Studio Ghibli bathhouse at dusk: Spirited Away, Joe Hisaishi, a bathhouse counter, hojicha, dusk. Neighbors who only share "film composer" (John Williams, Michael Giacchino) are ranked below artists who share the film's tags.
+- a Wes Anderson brunch: The Grand Budapest Hotel, Wes Anderson, Alexandre Desplat, a pastel café, grapefruit spritz, day. No rain.
+- reading Murakami on a rainy night: Norwegian Wood, Kafka on the Shore, Bill Evans, a kissaten in Tokyo, a whiskey highball, rain. Singers with no shared tag drop.
+- Tarantino road trip diner at 2am: Pulp Fiction, Reservoir Dogs, Quentin Tarantino, Ennio Morricone, an American diner, bottomless coffee, night. Neon, retro, and crime from the films color the lamps amber. The trace should not say a fixture had no aesthetic tag.
+- Bridgerton garden tea party: Bridgerton, Pride and Prejudice, Vitamin String Quartet, a tea room, Earl Grey, day. A place named only Gården is dropped. The line on the card is the audience insight: Qloo's Bridgerton fans lean Harry Styles and Olivia Rodrigo, so the pad is a string-quartet take on modern pop.
 
 ## Lights
 
@@ -126,7 +144,8 @@ The demo is a public Vercel app, with no login.
 
 ## Known limits
 
-- The color prior is a table of tag-name stems. A miss still lights a lamp, hashed from the tag id, and the chip says there was no prior.
+- The color prior is a table of tag-name stems. A tag with no prior still lights a lamp, and the chip cites the entity or the tag. It does not say the fixture had no aesthetic tag.
+- The Qloo cache and the rate limit are in memory, per server instance. A cold start still calls Qloo. It does not fire the calls all at once.
 - The plain room is a live model only when a provider key is set. That key is set on Vercel Production and Preview. Local runs without it show the labeled cliché.
 - Sound is synthesized in the browser: a pad, a texture (rain, vinyl, water, crowd, air, or steam), and a pulse. No recorded tracks.
 - The poster is drawn type. Entity photos are not used as room art.

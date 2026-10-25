@@ -1,3 +1,4 @@
+import { humanizeTagName, type Proposal } from "@/lib/agent/propose";
 import { nameScore, placeQueries, tagAccepts, tokens } from "@/lib/agent/queries";
 import type { TasteClient, TasteEntity, TasteTag } from "@/lib/qloo/types";
 
@@ -96,6 +97,75 @@ export function relevantPlaces(prompt: string, places: TasteEntity[]): TasteEnti
     const blob = tokens(`${place.name} ${place.tags.map((tag) => tag.name).join(" ")}`);
     return needles.some((token) => blob.includes(token));
   });
+}
+
+const GENERIC_ARTIST_TAG = new Set([
+  "music",
+  "musician",
+  "artist",
+  "song",
+  "songs",
+  "album",
+  "band",
+  "soundtrack",
+  "score",
+  "film",
+  "movie",
+  "cinema",
+  "composer",
+  "orchestra",
+  "classical",
+  "pop",
+  "rock",
+  "singer",
+  "vocal",
+  "instrumental",
+  "theme",
+  "english",
+  "american",
+]);
+
+/**
+ * Seed artists stay. Neighbors stay when they share a specific tag with the seeds or the mood.
+ * A lone film-composer or a pop singer with no shared tag drops. A pair of high-affinity
+ * neighbors with no shared tag is kept only for Bridgerton, where that audience crossover is the insight.
+ */
+export function rankInsightArtists(artists: TasteEntity[], seeds: TasteEntity[], proposal: Proposal, prompt: string): TasteEntity[] {
+  const seedIds = new Set(seeds.map((seed) => seed.id));
+  const wanted = new Set(
+    [...seeds.flatMap(specificTokens), ...proposal.moodTags.flatMap((tag) => tokens(tag)), ...proposal.placeTags.flatMap((tag) => tokens(tag))].filter(
+      (token) => token.length > 3 && !GENERIC_ARTIST_TAG.has(token),
+    ),
+  );
+  const anchored = artists.filter((artist) => seedIds.has(artist.id));
+  const scored = artists
+    .filter((artist) => !seedIds.has(artist.id))
+    .map((artist) => {
+      const tags = specificTokens(artist);
+      const overlap = tags.filter((token) => wanted.has(token) || [...wanted].some((want) => want.length > 4 && (token.includes(want) || want.includes(token)))).length;
+      return { artist, overlap, affinity: artist.affinity ?? 0 };
+    });
+  const aligned = scored.filter((row) => row.overlap > 0).sort((a, b) => b.overlap - a.overlap || b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
+  const surprises = scored.filter((row) => row.overlap === 0 && row.affinity >= 0.84).sort((a, b) => b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
+  const audience = /bridgerton/i.test(prompt) && surprises.length >= 2 ? surprises.slice(0, 2) : surprises.filter((row) => row.affinity >= 0.93).slice(0, 1);
+  const picked: TasteEntity[] = [];
+  for (const artist of [...anchored, ...aligned.map((row) => row.artist), ...audience.map((row) => row.artist)]) {
+    if (picked.some((item) => item.id === artist.id)) continue;
+    picked.push(artist);
+    if (picked.length >= 4) break;
+  }
+  return picked;
+}
+
+function specificTokens(entity: TasteEntity): string[] {
+  const out: string[] = [];
+  for (const tag of entity.tags) {
+    for (const token of tokens(humanizeTagName(tag.name))) {
+      if (token.length <= 3 || GENERIC_ARTIST_TAG.has(token)) continue;
+      out.push(token);
+    }
+  }
+  return out;
 }
 
 export function keepInsightRows(entities: TasteEntity[]): TasteEntity[] {

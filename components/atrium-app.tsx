@@ -212,7 +212,7 @@ export function AtriumApp() {
       <header className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <div>
           <p className="font-display text-2xl tracking-tight sm:text-3xl">Atrium</p>
-          <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room</p>
+          <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room · MIT License</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {status?.llm ? (
@@ -231,8 +231,11 @@ export function AtriumApp() {
         </div>
       </header>
 
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#0c0b0a]/95 px-4 py-2 backdrop-blur-md xl:right-[380px]">
+        <PromptDock prompt={prompt} loading={loading} onPrompt={setPrompt} onSubmit={compile} />
+      </div>
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
-        <main className="min-w-0 space-y-4 px-4 pb-16 sm:px-6">
+        <main className="min-w-0 space-y-4 px-4 pb-36 sm:px-6">
           <div
             className={result ? "grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2" : undefined}
             onTouchStart={(event) => {
@@ -318,8 +321,6 @@ export function AtriumApp() {
             </>
           ) : null}
 
-          <PromptDock prompt={prompt} loading={loading} onPrompt={setPrompt} onSubmit={compile} />
-
           <div className="flex flex-col gap-4 border border-white/10 bg-white/[0.03] p-3 sm:flex-row sm:items-start sm:justify-between">
             <AudioDesk
               texture={showPlain ? null : (atmosphere?.audio ?? null)}
@@ -374,19 +375,28 @@ function Comparison({
             {view === "qloo" ? "See plain room" : "See Atrium"}
           </button>
         </div>
-        <p className="mt-2 text-sm leading-6 text-white/85">{comparison.headline}</p>
-        <ul className="mt-2 space-y-1">
-          {comparison.qlooAdded.map((item) => (
-            <li key={item.label} className="text-xs leading-5 text-white/75">
-              <span className="text-white">{item.label}.</span> {item.detail}
-            </li>
-          ))}
-          {comparison.qlooScored.map((item) => (
-            <li key={item.label} className="text-xs leading-5 text-white/75">
-              <span className="text-white">{item.label}.</span> {item.detail} The plain reading also reached for this name.
+        <ul className="mt-3 space-y-2">
+          {comparison.headlines.map((line) => (
+            <li key={line} className="font-display text-lg leading-snug text-white sm:text-xl">
+              {line}
             </li>
           ))}
         </ul>
+        <details className="mt-3">
+          <summary className="cursor-pointer font-mono text-[10px] tracking-[0.16em] text-white/50 uppercase">Every row</summary>
+          <ul className="mt-2 space-y-1">
+            {comparison.qlooAdded.map((item) => (
+              <li key={item.label} className="text-xs leading-5 text-white/75">
+                <span className="text-white">{item.label}.</span> {item.detail}
+              </li>
+            ))}
+            {comparison.qlooScored.map((item) => (
+              <li key={item.label} className="text-xs leading-5 text-white/75">
+                <span className="text-white">{item.label}.</span> {item.detail} The plain reading also reached for this name.
+              </li>
+            ))}
+          </ul>
+        </details>
       </div>
       <div>
         <h2 className="font-mono text-[10px] tracking-[0.16em] text-white/55 uppercase">What the plain reading assumed</h2>

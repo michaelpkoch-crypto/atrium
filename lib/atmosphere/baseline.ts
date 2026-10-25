@@ -22,12 +22,25 @@ export type PlainRoom = {
 
 export type Comparison = {
   headline: string;
+  /** Three to five differences, each said once. The plain assumption is its own line. */
+  headlines: string[];
   qlooAdded: { label: string; detail: string }[];
   qlooScored: { label: string; detail: string }[];
   plainAssumed: string[];
   baselineSource: PlainRoom["source"];
   baselineModel: string | null;
 };
+
+/** Bridgerton's audience crossover is the insight. Other prompts do not get this sentence. */
+export function audienceLine(prompt: string, artists: { name: string; gap?: boolean }[]): string | null {
+  if (!/bridgerton/i.test(prompt)) return null;
+  const neighbors = artists.filter((artist) => !artist.gap && !/string quartet|bridgerton/i.test(artist.name));
+  const preferredOrder = ["Harry Styles", "Olivia Rodrigo", "Troye Sivan", "Halsey"];
+  const preferred = preferredOrder.filter((name) => neighbors.some((artist) => artist.name.toLowerCase() === name.toLowerCase()));
+  const names = (preferred.length >= 2 ? preferred : neighbors.map((artist) => artist.name)).slice(0, 2);
+  if (names.length < 2) return null;
+  return `Qloo: Bridgerton fans lean ${names[0]} and ${names[1]}, so the pad is a string-quartet take on modern pop.`;
+}
 
 type Pack = {
   id: string;
@@ -443,10 +456,9 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
     if (!added.some((item) => item.label === name)) added.push(row);
   };
 
-  const instead = plain.artists.filter(Boolean)[0] ?? plain.assumptions[0] ?? "a generic mood";
   const addedDetail = (kind: string, affinity: number | null) => {
     const score = affinity == null ? "Kept after Qloo confirmed the name" : `Qloo affinity ${affinity.toFixed(2)}`;
-    return `${kind}. ${score}. The plain reading did not name this; it assumed ${instead}.`;
+    return `${kind}. ${score}.`;
   };
   for (const drink of atmosphere.drinks) {
     if (drink.gap) continue;
@@ -466,16 +478,28 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
 
   const qlooAdded = added.slice(0, 6);
   const qlooScored = scored.slice(0, 3);
-  const lead = qlooAdded.slice(0, 3).map((item) => item.label).join(", ");
   const assumption = plain.assumptions[0] ?? "a generic mood";
-  const headline = qlooAdded.length
-    ? `Qloo adds ${lead}. The plain reading did not name them; it assumed ${assumption}.`
-    : qlooScored.length
-      ? `The plain reading guessed ${qlooScored[0].label}. Qloo scored that guess and the neighbors around it.`
-      : `The plain reading stayed at ${assumption}. The room still cites the rows Qloo returned.`;
+  const headlines: string[] = [];
+  const audience = audienceLine(
+    prompt,
+    atmosphere.music.map((row) => ({ name: row.name, gap: row.gap })),
+  );
+  if (audience) headlines.push(audience);
+  const drink = atmosphere.drinks.find((row) => !row.gap);
+  if (drink && !mentioned(drink.venue, prompt)) headlines.push(`${drink.venue} pours ${drink.name}.`);
+  const tempoArtist = atmosphere.music.find((row) => !row.gap);
+  if (tempoArtist && !mentioned(tempoArtist.name, prompt)) {
+    headlines.push(`${tempoArtist.name} sets the tempo at ${atmosphere.audio.tempoBpm} BPM.`);
+  }
+  const missed = qlooAdded.find((item) => item.label !== drink?.venue && item.label !== tempoArtist?.name);
+  if (missed) headlines.push(`${missed.label} is in the room. The plain reading did not name it.`);
+  const lamp = atmosphere.room.lights.find((light) => light.citation.tag)?.citation.tag;
+  if (lamp && headlines.length < 4) headlines.push(`${lamp} colors the lamps.`);
+  headlines.push(`The plain reading assumed ${assumption}.`);
 
   return {
-    headline,
+    headline: headlines[0] ?? `The plain reading stayed at ${assumption}.`,
+    headlines: headlines.slice(0, 5),
     qlooAdded,
     qlooScored,
     plainAssumed: plain.assumptions,

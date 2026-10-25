@@ -8,11 +8,13 @@ import {
   placeFits,
   tagAllowed,
   tagFitsMood,
+  tagsForRoom,
   type PersonKind,
   type Proposal,
   type WorkKind,
 } from "@/lib/agent/propose";
-import { keepInsightRows } from "@/lib/agent/rank";
+import { matchFamily } from "@/lib/atmosphere/families";
+import { keepInsightRows, rankInsightArtists } from "@/lib/agent/rank";
 import type { InsightTarget, TasteClient, TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
 
 const WORK_TYPE: Record<WorkKind, string> = {
@@ -58,7 +60,8 @@ export async function assembleGraph(
           filterTagIds: place ? placeTagIds : undefined,
           location: place ? proposal.city : undefined,
           take: 4,
-          timeoutMs: 6000,
+          // Place insights are the call that was aborting on a cold compile. Artists stay on the short budget.
+          timeoutMs: place ? 15_000 : 6_000,
         });
         const key = keyFor(filterType);
         buckets[key] = result.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
@@ -98,7 +101,12 @@ export async function assembleGraph(
       result: places.map((place) => place.name).join(", "),
     });
   }
-  buckets.artists = mergeAffinity([...found.artists, ...buckets.artists.filter((artist) => !offVibe(artist, proposal))]);
+  buckets.artists = rankInsightArtists(
+    mergeAffinity([...found.artists, ...buckets.artists.filter((artist) => !offVibe(artist, proposal))]),
+    found.seeds,
+    proposal,
+    prompt,
+  );
   buckets.movies = mergeAffinity([...found.movies, ...buckets.movies]);
   buckets.books = mergeAffinity([...found.books, ...buckets.books]);
 
@@ -126,29 +134,41 @@ export async function assembleGraph(
     return null;
   }
 
+  const seeds = found.seeds.map((entity) => calm(entity, proposal));
   const graph: TasteGraph = {
     source: client.mode === "mock" ? "mock" : "qloo",
     synthetic: false,
-    seeds: found.seeds,
-    ...buckets,
-    tags: found.tags.filter((tag) => tagFitsMood(tag.name, proposal)),
+    seeds,
+    artists: buckets.artists.map((entity) => calm(entity, proposal)),
+    places: buckets.places.map((entity) => calm(entity, proposal)),
+    brands: buckets.brands.map((entity) => calm(entity, proposal)),
+    books: buckets.books.map((entity) => calm(entity, proposal)),
+    movies: buckets.movies.map((entity) => calm(entity, proposal)),
+    tags: roomTags(found.tags, seeds, proposal),
     signalEntityIds: entityIds,
     signalTagIds: placeTagIds.length ? placeTagIds : tagIds,
     scene: proposal.scene,
   };
-  return {
-    ...graph,
-    seeds: graph.seeds.map((entity) => calm(entity, proposal)),
-    artists: graph.artists.map((entity) => calm(entity, proposal)),
-    places: graph.places.map((entity) => calm(entity, proposal)),
-    brands: graph.brands.map((entity) => calm(entity, proposal)),
-    books: graph.books.map((entity) => calm(entity, proposal)),
-    movies: graph.movies.map((entity) => calm(entity, proposal)),
-  };
+  return graph;
 }
 
 function calm(entity: TasteEntity, proposal: Proposal): TasteEntity {
-  return { ...entity, tags: entity.tags.filter((tag) => tagFitsMood(tag.name, proposal)) };
+  return { ...entity, tags: tagsForRoom(entity.tags, proposal) };
+}
+
+/** Mood tags win. When none of them carry a color, the seed's own aesthetic tags fill the lamps. */
+function roomTags(found: TasteTag[], seeds: TasteEntity[], proposal: Proposal): TasteTag[] {
+  const kept = found.filter((tag) => tagFitsMood(tag.name, proposal));
+  if (kept.some((tag) => matchFamily(tag.name))) return kept.slice(0, 6);
+  const extra: TasteTag[] = [];
+  for (const seed of seeds) {
+    for (const tag of seed.tags) {
+      if (!matchFamily(tag.name)) continue;
+      if (extra.some((item) => item.id === tag.id) || kept.some((item) => item.id === tag.id)) continue;
+      extra.push(tag);
+    }
+  }
+  return [...kept, ...extra].slice(0, 6);
 }
 
 async function confirmAll(client: TasteClient, prompt: string, proposal: Proposal, steps: AgentStep[]) {
