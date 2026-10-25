@@ -10,10 +10,13 @@ import {
   counterRejected,
   humanizeTagName,
   isLandmark,
+  chooseSignalTags,
+  dedupeByName,
   knownProposal,
   placeFits,
   promptEchoPlace,
   rankCounterPlaces,
+  roomKicker,
   sceneFromPrompt,
   tagAllowed,
   tagFitsMood,
@@ -245,7 +248,12 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.music.map((row) => row.name)).not.toContain("Sezen Aksu");
     expect(result.atmosphere.music.map((row) => row.name)).not.toContain("Erkin Gören");
     expect(result.atmosphere.music.map((row) => row.name)).not.toContain("Teoman");
-    expect(result.atmosphere.room.timeLabel).toBe(result.baseline.room.timeLabel);
+    expect(result.atmosphere.room.timeLabel).toBe("Night · rain");
+    expect(result.baseline.room.timeLabel).toBe("Night · rain");
+    const ranked = result.steps.find((step) => step.call === "rank_artists");
+    expect(ranked?.detail).toMatch(/Ranked after insights/);
+    expect(ranked?.detail).toMatch(/Sezen Aksu: dropped via jazz from Haruki Murakami/);
+    expect(ranked?.result).toContain("Bill Evans");
   });
 
   it("colors a Tarantino diner from neon, retro, and crime", async () => {
@@ -280,13 +288,26 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.graph.places.map((place) => place.name).join(" ")).not.toMatch(/Igreja|Beyond The Wall/);
     expect(result.atmosphere.drinks[0]?.venue).toMatch(/Tea Room/);
     expect(result.atmosphere.drinks.map((drink) => drink.name)).toContain("Earl Grey");
-    expect(typeLabel("urn:entity:movie", "Pride & Prejudice")).toBe("film (2005)");
+    expect(typeLabel("urn:entity:movie", "Pride & Prejudice")).toBe("Film (2005)");
+    expect(typeLabel("urn:entity:movie", "Spirited Away")).toBe("Film (2001)");
+    expect(typeLabel("urn:entity:movie", "Blade Runner 2049")).toBe("Film (2017)");
+    expect(typeLabel("urn:entity:movie", "Paper Lantern")).toBe("Film");
+    expect(typeLabel("urn:entity:tv_show", "Bridgerton")).toBe("TV");
     expect(result.baseline.room.timeLabel).toBe("Day");
     expect(result.atmosphere.room.timeLabel).toBe("Day");
     expect(result.atmosphere.audio.description).toBe(
       "Qloo: Bridgerton fans lean Harry Styles and Olivia Rodrigo, so the pad is a string-quartet take on modern pop.",
     );
     expect(result.comparison.headlines[0]).toBe(result.atmosphere.audio.description);
+  });
+
+  it("pours a cozy Ghibli kitchen from a cafe, not an onsen", async () => {
+    const result = await compile("Studio Ghibli cozy kitchen");
+    expect(result.graph.places.map((place) => place.name)).toContain("Hearth Kitchen Cafe");
+    expect(result.graph.places.map((place) => place.name).join(" ")).not.toMatch(/Onsen|Day Spa|Bathhouse|Fuji View/);
+    expect(result.atmosphere.drinks[0]?.venue).toMatch(/Hearth Kitchen/);
+    expect(result.atmosphere.room.timeLabel).toBe("Dusk");
+    expect(roomKicker("Studio Ghibli cozy kitchen", result.atmosphere.room.plan, result.atmosphere.drinks[0]?.venue)).toBe("Kitchen");
   });
 });
 
@@ -330,17 +351,23 @@ describe("place insight budget", () => {
 });
 
 describe("artist and counter filters", () => {
-  function artist(name: string, tags: string[], affinity: number): TasteEntity {
+  function artist(
+    name: string,
+    tags: string[],
+    affinity: number,
+    explainers: TasteEntity["explainers"] = [],
+    type = "urn:entity:artist",
+  ): TasteEntity {
     return {
       id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
       name,
-      type: "urn:entity:artist",
+      type,
       description: null,
       imageUrl: null,
       popularity: null,
       affinity,
       tags: tags.map((tag) => ({ id: `tag:${tag}`, name: tag, type: "urn:tag:keyword" })),
-      explainers: [],
+      explainers,
       mock: true,
     };
   }
@@ -360,18 +387,46 @@ describe("artist and counter filters", () => {
       proposal,
       "reading Murakami on a rainy night",
     );
-    expect(ranked.map((row) => row.name)).toEqual(["Bill Evans", "Ahmad Jamal"]);
+    expect(ranked.artists.map((row) => row.name)).toEqual(["Bill Evans", "Ahmad Jamal"]);
+    expect(ranked.report.find((row) => row.name === "Ahmad Jamal")?.via).toMatch(/jazz/);
+  });
+
+  it("drops a jazz tag whose affinity is the novelist, not Bill Evans", () => {
+    const proposal = knownProposal("reading Murakami on a rainy night")!;
+    const bill = artist("Bill Evans", ["Jazz", "Piano", "Modal Jazz", "Lyrical"], 0.72);
+    const murakami = artist("Haruki Murakami", ["Literature", "Japan", "Rain", "Night"], 0.9, [], "urn:entity:person");
+    const ranked = rankInsightArtists(
+      [
+        bill,
+        artist("Sezen Aksu", ["Jazz", "Literature", "Lyrical", "Pop"], 0.9, [{ id: murakami.id, name: murakami.name, score: 0.9 }]),
+        artist("Ahmad Jamal", ["Jazz", "Piano"], 0.7, [{ id: bill.id, name: bill.name, score: 0.7 }]),
+        artist("Erkin Gören", ["Singer-songwriter", "Rock"], 0.88, [{ id: murakami.id, name: murakami.name, score: 0.88 }]),
+      ],
+      [bill, murakami],
+      proposal,
+      "reading Murakami on a rainy night",
+    );
+    expect(ranked.artists.map((row) => row.name)).toEqual(["Bill Evans", "Ahmad Jamal"]);
+    expect(ranked.report.find((row) => row.name === "Sezen Aksu")).toMatchObject({
+      kept: false,
+      via: "jazz from Haruki Murakami, not a music seed",
+    });
+    expect(ranked.report.find((row) => row.name === "Ahmad Jamal")?.via).toBe("jazz, piano (Bill Evans)");
+    expect(ranked.report.find((row) => row.name === "Erkin Gören")?.via).toBe("no shared genre");
   });
 
   it("still keeps a mood match and the Bridgerton audience pair", () => {
     const wes = knownProposal("a Wes Anderson brunch")!;
+    const desplat = artist("Alexandre Desplat", ["Symmetry"], 0.9);
+    const wesPerson = artist("Wes Anderson", ["Symmetry", "Pastel"], 0.9, [], "urn:entity:person");
     const mark = rankInsightArtists(
-      [artist("Mark Mothersbaugh", ["Symmetry", "Electronic"], 0.8)],
-      [artist("Alexandre Desplat", ["Symmetry"], 0.9)],
+      [artist("Mark Mothersbaugh", ["Symmetry", "Electronic"], 0.8, [{ id: wesPerson.id, name: wesPerson.name, score: 0.8 }])],
+      [desplat, wesPerson],
       wes,
       "a Wes Anderson brunch",
     );
-    expect(mark.map((row) => row.name)).toContain("Mark Mothersbaugh");
+    expect(mark.artists.map((row) => row.name)).toContain("Mark Mothersbaugh");
+    expect(mark.report.find((row) => row.name === "Mark Mothersbaugh")?.via).toMatch(/symmetry/);
 
     const bridgerton = knownProposal("Bridgerton garden tea party")!;
     const audience = rankInsightArtists(
@@ -385,7 +440,8 @@ describe("artist and counter filters", () => {
       bridgerton,
       "Bridgerton garden tea party",
     );
-    expect(audience.map((row) => row.name)).toEqual(["Vitamin String Quartet", "Harry Styles", "Olivia Rodrigo"]);
+    expect(audience.artists.map((row) => row.name)).toEqual(["Vitamin String Quartet", "Harry Styles", "Olivia Rodrigo"]);
+    expect(audience.report.find((row) => row.name === "Harry Styles")?.via).toBe("audience crossover");
   });
 
   it("ranks a diner above a church, a hotel, and a fiction set", () => {
@@ -410,6 +466,52 @@ describe("artist and counter filters", () => {
       tea,
     );
     expect(rooms.map((row) => row.name)).toEqual(["Tea Room Miami"]);
+  });
+
+  it("titles the room from the prompt and prefers a kitchen counter to an onsen", () => {
+    expect(roomKicker("Studio Ghibli bathhouse at dusk", "bath", "Bathhouse Tea Counter")).toBe("Bath");
+    expect(roomKicker("a cozy Ghibli kitchen", "bath", "Onsen Hot Pools & Day Spa")).toBe("Kitchen");
+    expect(roomKicker("Bridgerton garden tea party", "symmetry", "Tea Room Miami")).toBe("Tea party");
+    expect(roomKicker("Tarantino road trip diner at 2am", "lounge", "Tom's Restaurant")).toBe("Diner");
+    expect(roomKicker("reading Murakami on a rainy night", "rain", "Rain Window Kissaten")).toBe("Kissaten");
+    const kitchen = knownProposal("Studio Ghibli cozy kitchen")!;
+    expect(kitchen.placeQueries).toEqual(["cafe", "tea house", "coffee shop"]);
+    expect(kitchen.placeQueries.join(" ")).not.toMatch(/onsen|sento/);
+  });
+
+  it("folds patisserie and drops a bare category when a specific place exists", () => {
+    const folded = dedupeByName([
+      place("Pâtisserie", ["pastry"]),
+      place("Patisserie", ["pastry"]),
+    ]);
+    expect(folded).toHaveLength(1);
+    const brunch = knownProposal("a Wes Anderson brunch")!;
+    const kept = rankCounterPlaces(
+      [place("Patisserie", ["pastry", "brunch"]), place("Pâtisserie", ["pastry"]), place("Pink Linen Cafe", ["brunch", "cafe"])],
+      brunch,
+    );
+    expect(kept.map((row) => row.name)).toEqual(["Pink Linen Cafe"]);
+    const diner = knownProposal("Tarantino road trip diner at 2am")!;
+    const counters = rankCounterPlaces(
+      [place("American Diner", ["diner"]), place("American Diner Dulwich", ["diner"]), place("Tom's Restaurant", ["restaurant"])],
+      diner,
+    );
+    expect(counters.map((row) => row.name)).not.toContain("American Diner");
+    expect(counters.map((row) => row.name)).toEqual(expect.arrayContaining(["American Diner Dulwich", "Tom's Restaurant"]));
+  });
+
+  it("keeps one tag when a query returns Jazz three times", () => {
+    const proposal = knownProposal("reading Murakami on a rainy night")!;
+    const chosen = chooseSignalTags(
+      [
+        { query: "jazz", tag: { id: "1", name: "Jazz", type: "urn:tag" } },
+        { query: "jazz", tag: { id: "2", name: "Modal Jazz", type: "urn:tag" } },
+        { query: "jazz", tag: { id: "3", name: "Piano Jazz", type: "urn:tag" } },
+        { query: "rain", tag: { id: "4", name: "Rain", type: "urn:tag" } },
+      ],
+      proposal,
+    );
+    expect(chosen.tags.map((tag) => tag.name)).toEqual(["Jazz", "Rain"]);
   });
 
   it("collapses repeated tag names in a seed", () => {

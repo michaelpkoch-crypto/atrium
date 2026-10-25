@@ -2,12 +2,11 @@ import type { AgentStep } from "@/lib/agent/steps";
 import {
   broaderPlaceQueries,
   confirmsName,
+  chooseSignalTags,
   dedupeByName,
-  humanizeTagName,
   offVibe,
   placeFits,
   rankCounterPlaces,
-  tagAllowed,
   tagFitsMood,
   tagsForRoom,
   type PersonKind,
@@ -103,12 +102,23 @@ export async function assembleGraph(
       result: places.map((place) => place.name).join(", "),
     });
   }
-  buckets.artists = rankInsightArtists(
+  const rankedArtists = rankInsightArtists(
     mergeAffinity([...found.artists, ...buckets.artists.filter((artist) => !offVibe(artist, proposal))]),
     found.seeds,
     proposal,
     prompt,
   );
+  buckets.artists = rankedArtists.artists;
+  const artistInsights = client.trace.find((call) => call.path === "/v2/insights" && call.query["filter.type"] === "urn:entity:artist");
+  steps.push({
+    why: "A neighbor stays when it shares a genre or a mood token with the music seeds. Affinity that comes only from a non-music person is dropped. This runs on the insight rows after the cache is read.",
+    call: "rank_artists",
+    detail: `${artistInsights?.cached ? "Cached insights, then ranked. " : "Ranked after insights. "}${rankedArtists.report
+      .slice(0, 8)
+      .map((row) => `${row.name}: ${row.kept ? "kept" : "dropped"} via ${row.via}`)
+      .join("; ")}`,
+    result: rankedArtists.artists.map((artist) => artist.name).join(", ") || "none",
+  });
   buckets.movies = mergeAffinity([...found.movies, ...buckets.movies]);
   buckets.books = mergeAffinity([...found.books, ...buckets.books]);
 
@@ -251,18 +261,9 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
     });
   }
 
-  const tags: TasteTag[] = [];
-  const droppedTags: string[] = [];
-  for (const row of tagRows) {
-    const name = humanizeTagName(row.tag.name);
-    if (!tagAllowed(row.tag.name, proposal)) {
-      droppedTags.push(name);
-      continue;
-    }
-    if (tags.some((tag) => tag.id === row.tag.id)) continue;
-    tags.push({ ...row.tag, name });
-    if (tags.length >= 5) break;
-  }
+  const chosenTags = chooseSignalTags(tagRows, proposal);
+  const tags = chosenTags.tags;
+  const droppedTags = chosenTags.dropped;
   steps.push({
     why: `Keep tags that are the moods ${proposal.moodTags.join(", ") || "named for this prompt"}. Other tag hits are a different vibe.`,
     call: "GET /v2/tags",
@@ -286,11 +287,14 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
     });
   }
 
-  const placeTags = tagRows
-    .filter((row) => proposal.placeTags.some((tag) => tag.toLowerCase() === row.query.toLowerCase()))
-    .filter((row) => !GENERIC_TAG.has(row.query.toLowerCase()))
-    .map((row) => row.tag)
-    .filter((tag, index, list) => list.findIndex((item) => item.id === tag.id) === index);
+  const placeTags = tags.filter((tag) => {
+    const name = tag.name.toLowerCase();
+    return proposal.placeTags.some((query) => {
+      const wanted = query.toLowerCase();
+      if (GENERIC_TAG.has(wanted)) return false;
+      return name === wanted || name.includes(wanted) || wanted.includes(name);
+    });
+  });
 
   return { seeds: seeds.slice(0, 4), artists, movies, books, places, tags, placeTags };
 }

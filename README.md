@@ -81,7 +81,7 @@ The client does not call `/recommendations` or `/recs`.
 
 Calls share a queue of two. A 429 waits on `Retry-After` and is not listed unless the retry fails. Successful reads stay in an in-memory cache for 24 hours. The API key is not part of the cache key, and no Qloo payload is committed.
 
-Artists set the tempo. A neighbor stays only when it shares a genre or a mood tag with the seeds, such as jazz, piano, ambient, or classical. A short list is kept on purpose. Places set the counter, and only when the venue is the kind the prompt asked for: a diner, a café, a tea room, a bar, a kissaten. A church, a hotel, or a landmark does not pour. Tag names pick a color family. When the kept tags have no color prior, the seeds' own tags (neon, retro, crime) color the lamps. The chip cites that tag. Both rooms use the prompt's time of day, so a dusk prompt reads Dusk on the plain side too.
+Artists set the tempo. A neighbor stays when it shares an allowlisted genre or mood with the music seeds, such as jazz, piano, ambient, or classical. Literature, pop, and singer-songwriter do not count. If Qloo's explainability says the affinity came from a person rather than the music seed, that neighbor is dropped unless the shared token is on that person. The rank runs after the cache is read, and the debug trace names the token. A short list is kept on purpose. Places set the counter from the room the prompt names: a kitchen looks for a café or tea house, and an onsen only wins when the prompt says bathhouse. A church, a hotel, or a landmark does not pour. One tag is kept per query. Tag names pick a color family. When the kept tags have no color prior, the seeds' own tags (neon, retro, crime) color the lamps. The chip cites that tag. Both rooms use the prompt's time of day. A rainy night reads Night · rain. A dusk prompt reads Dusk.
 
 Auth is `X-Api-Key`. A 401 names the hackathon host. Personal data is not sent. The prompt is a cultural description, not a user profile. Results describe what groups tend to like.
 
@@ -116,7 +116,7 @@ Other live rooms from the same Preview pass:
 
 - Studio Ghibli bathhouse at dusk: Spirited Away, Joe Hisaishi, a bathhouse counter, hojicha, dusk. Neighbors who only share "film composer" (John Williams, Michael Giacchino) are ranked below artists who share the film's tags.
 - a Wes Anderson brunch: The Grand Budapest Hotel, Wes Anderson, Alexandre Desplat, a pastel café, grapefruit spritz, day. No rain.
-- reading Murakami on a rainy night: Norwegian Wood, Kafka on the Shore, Bill Evans, a kissaten in Tokyo, a whiskey highball, rain. Singers with no shared tag drop.
+- reading Murakami on a rainy night: Norwegian Wood, Kafka on the Shore, Bill Evans, a kissaten in Tokyo, a whiskey highball, Night · rain. A singer whose affinity is Murakami, even with a Jazz tag, drops.
 - Tarantino road trip diner at 2am: Pulp Fiction, Reservoir Dogs, Quentin Tarantino, Ennio Morricone, an American diner, bottomless coffee, night. Neon, retro, and crime from the films color the lamps amber. The trace should not say a fixture had no aesthetic tag.
 - Bridgerton garden tea party: Bridgerton, Pride and Prejudice, Vitamin String Quartet, a tea room, Earl Grey, day. A place named only Gården is dropped. The line on the card is the audience insight: Qloo's Bridgerton fans lean Harry Styles and Olivia Rodrigo, so the pad is a string-quartet take on modern pop.
 

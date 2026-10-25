@@ -126,16 +126,64 @@ const MURAKAMI: Proposal = {
   reason: "Murakami means the novels and a jazz kissa, not a landmark or a thermal bath.",
 };
 
-/** Canonical names for the four sample prompts. Other prompts return null. */
+type StatedRoom = { label: string; queries: string[]; tags: string[] };
+
+const STATED_ROOMS: { test: RegExp; room: StatedRoom }[] = [
+  { test: /\b(bathhouse|onsen|sento|hot spring|day spa)\b/i, room: { label: "Bath", queries: ["onsen", "sento"], tags: ["bathhouse", "onsen", "tea"] } },
+  { test: /\b(tea party|garden tea|afternoon tea)\b/i, room: { label: "Tea party", queries: ["tea room", "tea house"], tags: ["tea", "garden"] } },
+  { test: /\b(tea room|tea house|tearoom)\b/i, room: { label: "Tea room", queries: ["tea room", "tea house"], tags: ["tea"] } },
+  { test: /\bkitchen\b/i, room: { label: "Kitchen", queries: ["cafe", "tea house", "coffee shop"], tags: ["cafe", "tea", "kitchen"] } },
+  { test: /\bdiner\b/i, room: { label: "Diner", queries: ["diner", "american diner"], tags: ["diner"] } },
+  { test: /\b(jazz bar|jazz club|jazz lounge)\b/i, room: { label: "Bar", queries: ["jazz bar", "jazz club"], tags: ["jazz", "bar"] } },
+  { test: /\bbar\b/i, room: { label: "Bar", queries: ["bar", "jazz bar"], tags: ["bar", "jazz"] } },
+  { test: /\b(reading nook|nook)\b/i, room: { label: "Reading nook", queries: ["cafe", "kissaten"], tags: ["cafe", "kissaten"] } },
+  { test: /\b(brunch|patisserie|pastry)\b/i, room: { label: "Café", queries: ["patisserie", "brunch cafe"], tags: ["cafe", "brunch", "pastry"] } },
+  { test: /\b(kissaten|jazz kissa)\b/i, room: { label: "Kissaten", queries: ["kissaten", "jazz kissa"], tags: ["cafe", "kissaten"] } },
+  { test: /\bgarden\b/i, room: { label: "Garden", queries: ["tea room", "garden cafe"], tags: ["tea", "garden"] } },
+];
+
+/** The room the prompt actually names. Onsen is not implied by a kitchen. */
+export function statedRoom(prompt: string): StatedRoom | null {
+  return STATED_ROOMS.find((row) => row.test.test(prompt))?.room ?? null;
+}
+
+/**
+ * The word above the title. The prompt's room wins. A place category is the fallback.
+ * The floor-plan id (bath, lounge) is not a title.
+ */
+export function roomKicker(prompt: string, plan: string, placeHint = ""): string {
+  const stated = statedRoom(prompt);
+  if (stated) return stated.label;
+  const blob = fold(`${placeHint} ${plan}`).toLowerCase();
+  if (/\b(kissaten|kissa)\b/.test(blob)) return "Kissaten";
+  if (/\bdiner\b/.test(blob)) return "Diner";
+  if (/\b(tea room|tea house|tearoom)\b/.test(blob)) return "Tea room";
+  if (/\b(onsen|bathhouse|sento)\b/.test(blob)) return "Bath";
+  if (/\b(cafe|coffee)\b/.test(blob)) return "Café";
+  if (/\bbar\b/.test(blob)) return "Bar";
+  if (plan === "bath") return "Bath";
+  if (plan === "lounge") return "Lounge";
+  if (plan === "neon") return "Night";
+  if (plan === "symmetry") return "Day";
+  if (plan === "rain") return "Rain";
+  if (plan === "brutalist") return "Concrete";
+  return "Room";
+}
+
+/** Canonical names for the sample prompts. A stated room replaces the default venue. */
 export function knownProposal(prompt: string): Proposal | null {
   const text = prompt.toLowerCase();
-  if (/ghibli|spirited away|miyazaki|hisaishi/.test(text)) return GHIBLI;
-  if (/blade runner/.test(text)) return BLADE;
-  if (/wes anderson|grand budapest|tenenbaums/.test(text)) return WES;
-  if (/murakami|norwegian wood|kafka on the shore/.test(text)) return MURAKAMI;
-  if (/tarantino|pulp fiction|reservoir dogs/.test(text)) return TARANTINO;
-  if (/bridgerton/.test(text)) return BRIDGERTON;
-  return null;
+  let base: Proposal | null = null;
+  if (/ghibli|spirited away|miyazaki|hisaishi/.test(text)) base = GHIBLI;
+  else if (/blade runner/.test(text)) base = BLADE;
+  else if (/wes anderson|grand budapest|tenenbaums/.test(text)) base = WES;
+  else if (/murakami|norwegian wood|kafka on the shore/.test(text)) base = MURAKAMI;
+  else if (/tarantino|pulp fiction|reservoir dogs/.test(text)) base = TARANTINO;
+  else if (/bridgerton/.test(text)) base = BRIDGERTON;
+  if (!base) return null;
+  const room = statedRoom(prompt);
+  if (!room) return base;
+  return { ...base, placeQueries: room.queries, placeTags: room.tags };
 }
 
 export function genericProposal(prompt: string): Proposal {
@@ -172,12 +220,11 @@ export function sceneFromPrompt(prompt: string): SceneMood {
   return { time: "night", weather: "clear", brightness: "dim" };
 }
 
-/** The word on both rooms. Rain is the weather label; day, dusk, and night come from the prompt. */
-export function labelForScene(scene: SceneMood): "Day" | "Dusk" | "Rain" | "Night" {
-  if (scene.time === "day") return "Day";
-  if (scene.time === "dusk") return "Dusk";
-  if (scene.weather === "rain") return "Rain";
-  return "Night";
+/** Time of day, with weather after it. A rainy night is "Night · rain", not just "Rain". */
+export function labelForScene(scene: SceneMood): string {
+  const time = scene.time === "day" ? "Day" : scene.time === "dusk" ? "Dusk" : "Night";
+  if (scene.weather === "rain" && scene.time !== "day") return `${time} · rain`;
+  return time;
 }
 
 /** Plain-room window for the same clock. The Qloo room may still use a neon city at night. */
@@ -332,8 +379,35 @@ function wantedServices(proposal: Proposal): Service[] {
   return out;
 }
 
+const BARE_CATEGORY = new Set([
+  "patisserie",
+  "pastry",
+  "cafe",
+  "coffee",
+  "diner",
+  "american",
+  "restaurant",
+  "tea",
+  "room",
+  "bar",
+  "jazz",
+  "kissaten",
+  "bakery",
+  "brunch",
+  "shop",
+  "kitchen",
+  "house",
+]);
+
+/** "Patisserie" or "American Diner" is the category, not a venue. A longer name is specific. */
+export function bareCategoryPlace(name: string): boolean {
+  const parts = tokens(fold(name)).filter((token) => token !== "the" && token !== "a" && token !== "an");
+  return parts.length > 0 && parts.length <= 2 && parts.every((token) => BARE_CATEGORY.has(token));
+}
+
 function counterScore(place: TasteEntity, services: Service[]): number {
   if (counterRejected(place.name)) return -1;
+  if (!services.includes("bath") && /\b(onsen|sento|bathhouse|bath house|day spa|hot spring)\b/i.test(fold(place.name))) return -1;
   if (!services.length) return 1;
   const name = fold(place.name);
   const tags = fold(place.tags.map((tag) => humanizeTagName(tag.name)).join(" "));
@@ -359,7 +433,9 @@ export function rankCounterPlaces(places: TasteEntity[], proposal: Proposal): Ta
       (a, b) =>
         b.score - a.score || (b.place.affinity ?? -1) - (a.place.affinity ?? -1) || a.place.name.localeCompare(b.place.name),
     );
-  return dedupeByName(ranked.map((row) => row.place));
+  const unique = dedupeByName(ranked.map((row) => row.place));
+  const specific = unique.filter((place) => !bareCategoryPlace(place.name));
+  return specific.length ? specific : unique;
 }
 
 const GENERIC_CATEGORY = new Set([
@@ -501,13 +577,47 @@ export function dedupeByName<T extends { id: string; name: string }>(rows: T[]):
   const seen = new Set<string>();
   const out: T[] = [];
   for (const row of rows) {
-    const key = row.name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const key = fold(row.name).toLowerCase().replace(/[^a-z0-9]+/g, "");
     if (!key || seen.has(row.id) || seen.has(key)) continue;
     seen.add(row.id);
     seen.add(key);
     out.push(row);
   }
   return out;
+}
+
+/** One tag per search query, then one per name. "Jazz" four times becomes one Jazz. */
+export function chooseSignalTags(rows: { tag: TasteTag; query: string }[], proposal: Proposal): { tags: TasteTag[]; dropped: string[] } {
+  const dropped: string[] = [];
+  const grouped = new Map<string, { tag: TasteTag; query: string }[]>();
+  for (const row of rows) {
+    const name = humanizeTagName(row.tag.name);
+    if (!tagAllowed(row.tag.name, proposal)) {
+      dropped.push(name);
+      continue;
+    }
+    const key = row.query.toLowerCase();
+    const list = grouped.get(key) ?? [];
+    list.push({ ...row, tag: { ...row.tag, name } });
+    grouped.set(key, list);
+  }
+  const picked: TasteTag[] = [];
+  for (const [query, list] of grouped) {
+    const exact = list.find((row) => fold(row.tag.name).toLowerCase() === query);
+    const chosen = exact ?? list.slice().sort((a, b) => a.tag.name.length - b.tag.name.length || a.tag.name.localeCompare(b.tag.name))[0];
+    if (!chosen) continue;
+    const nameKey = fold(chosen.tag.name).toLowerCase();
+    if (picked.some((tag) => fold(tag.name).toLowerCase() === nameKey)) {
+      dropped.push(chosen.tag.name);
+      continue;
+    }
+    picked.push(chosen.tag);
+    for (const extra of list) {
+      if (extra.tag.id !== chosen.tag.id) dropped.push(extra.tag.name);
+    }
+    if (picked.length >= 4) break;
+  }
+  return { tags: picked, dropped };
 }
 
 function moodMatch(tagName: string, mood: string): boolean {

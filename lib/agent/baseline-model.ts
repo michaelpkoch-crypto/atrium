@@ -1,7 +1,7 @@
 import { generateText, Output } from "ai";
 import { z } from "zod";
 
-import { knownProposal, sceneFromPrompt, windowForScene } from "@/lib/agent/propose";
+import { knownProposal, labelForScene, sceneFromPrompt, windowForScene } from "@/lib/agent/propose";
 import { plainRoomFromModel, stereotypeBaseline, type PlainRoom } from "@/lib/atmosphere/baseline";
 import type { TextureKind } from "@/lib/atmosphere/families";
 import type { LlmConfig } from "@/lib/config";
@@ -45,6 +45,7 @@ export async function modelBaseline(prompt: string, llm: LlmConfig): Promise<Pla
     if (!output) {
       return failedPlain(prompt, "the model returned an empty object");
     }
+    const scene = knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt);
     return plainRoomFromModel({
       model: llm.modelId,
       title: output.title?.trim() || "Plain reading",
@@ -55,7 +56,8 @@ export async function modelBaseline(prompt: string, llm: LlmConfig): Promise<Pla
       artists: cleanList(output.artists, 80, 4),
       tempoBpm: output.tempoBpm ?? 80,
       texture: asTexture(output.texture),
-      window: windowForScene(knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt)),
+      window: windowForScene(scene),
+      timeLabel: labelForScene(scene),
     });
   } catch (error) {
     const message = clipError(error, secrets);

@@ -65,7 +65,9 @@ function clampScore(value: number): number | null {
 }
 
 /** Pull explainability rows out of whatever object shape the Insights API returns. */
-export function extractExplainers(query: unknown, signalIds?: string[]): Explainer[] {
+export function extractExplainers(source: unknown, signalIds?: string[]): Explainer[] {
+  const root = asRecord(source);
+  const selfId = root ? (clip(root.entity_id, 80) ?? clip(root.id, 80)) : null;
   const found = new Map<string, Explainer>();
 
   const visit = (node: unknown, depth: number) => {
@@ -78,7 +80,7 @@ export function extractExplainers(query: unknown, signalIds?: string[]): Explain
     if (!record) return;
     const id = clip(record.entity_id, 80) ?? clip(record.id, 80) ?? clip(record.entityId, 80);
     const score = num(record.score) ?? num(record.weight) ?? num(record.affinity) ?? num(record.value);
-    if (id && score != null && id.startsWith("urn:") === false) {
+    if (id && id !== selfId && score != null && id.startsWith("urn:") === false) {
       const clamped = clampScore(score);
       if (clamped != null) {
         const previous = found.get(id);
@@ -94,7 +96,7 @@ export function extractExplainers(query: unknown, signalIds?: string[]): Explain
     for (const value of Object.values(record)) visit(value, depth + 1);
   };
 
-  visit(query, 0);
+  visit(source, 0);
   let rows = [...found.values()];
   if (signalIds && signalIds.length) {
     const signaled = rows.filter((row) => signalIds.includes(row.id));
@@ -178,7 +180,7 @@ export function normalizeEntity(raw: unknown, mock: boolean, signalIds?: string[
     popularity: num(record.popularity) ?? num(properties.popularity),
     affinity: (query ? num(query.affinity) : null) ?? num(record.affinity),
     tags,
-    explainers: extractExplainers(query, signalIds),
+    explainers: extractExplainers(record, signalIds),
     mock,
   };
 }

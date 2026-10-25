@@ -115,7 +115,7 @@ export const FAMILIES: Family[] = [
   },
   {
     id: "bath",
-    stems: ["bath", "bathhouse", "tea", "ghibli", "anime", "dusk", "steam", "lantern", "hojicha"],
+    stems: ["bath", "bathhouse", "onsen", "sento", "ghibli", "anime", "dusk", "steam", "lantern", "hojicha"],
     hue: 156,
     sat: 38,
     plan: "bath",

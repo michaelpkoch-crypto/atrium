@@ -8,6 +8,7 @@ import { PromptDock } from "@/components/prompt-dock";
 import { RoomFrame } from "@/components/room-canvas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { roomKicker } from "@/lib/agent/propose";
 import { EXAMPLE_PROMPTS } from "@/lib/examples";
 import { PLANS } from "@/lib/atmosphere/plans";
 import type { RoomScene } from "@/lib/atmosphere/schema";
@@ -89,6 +90,7 @@ export function AtriumApp() {
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RoomPayload | null>(null);
+  const [roomPrompt, setRoomPrompt] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
   const [view, setView] = useState<View>("qloo");
   const touchX = useRef<number | null>(null);
@@ -149,6 +151,7 @@ export function AtriumApp() {
         }
         if (event.type === "result" && event.result) {
           setResult(event.result);
+          setRoomPrompt(nextPrompt);
           received = true;
         }
       };
@@ -232,7 +235,7 @@ export function AtriumApp() {
           </div>
         </header>
         <div className="px-4 pb-3 sm:px-6">
-          <PromptDock prompt={prompt} loading={loading} onPrompt={setPrompt} onSubmit={compile} />
+          <PromptDock prompt={prompt} loading={loading} hasRoom={Boolean(result)} onPrompt={setPrompt} onSubmit={compile} />
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
@@ -287,7 +290,11 @@ export function AtriumApp() {
 
           <div>
             <p className="font-mono text-[10px] tracking-[0.18em] text-white/50 uppercase">
-              {showPlain ? "Plain reading" : atmosphere ? atmosphere.room.plan : "Empty room"}
+              {showPlain
+                ? "Plain reading"
+                : atmosphere
+                  ? roomKicker(roomPrompt ?? prompt, atmosphere.room.plan, atmosphere.drinks[0]?.venue ?? "")
+                  : "Empty room"}
             </p>
             <h1 className="font-display text-3xl leading-tight sm:text-4xl">
               {showPlain && plain ? plain.title : atmosphere ? atmosphere.title : "Name a mood by what it tastes like."}
@@ -473,10 +480,12 @@ function AgentTrace({ result }: { result: RoomPayload }) {
                   modelError: diagnostics.modelError,
                   plainError: diagnostics.plainError,
                   candidates: diagnostics.candidates,
+                  artistRank: result.steps.find((step) => step.call === "rank_artists") ?? null,
                   calls: result.trace.map((call) => ({
                     path: call.path,
                     query: call.query,
                     status: call.status,
+                    cached: call.cached ?? false,
                     resultCount: call.resultCount,
                     error: call.error,
                   })),

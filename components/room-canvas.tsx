@@ -102,16 +102,19 @@ export function RoomFrame({
         ) : null}
       </figure>
       {interactive ? (
-        <div className="flex w-full min-w-0 gap-1.5 overflow-x-auto pb-1" aria-label="Room fixtures">
-          {fixtureChips(scene, palette).map((chip) => (
-            <ChipButton
-              key={chip.id}
-              pressed={selected === chip.id}
-              onClick={() => setSelected((current) => (current === chip.id ? null : chip.id))}
-              swatch={chip.swatch}
-              text={chip.text}
-            />
-          ))}
+        <div className="relative min-w-0">
+          <div className="no-scrollbar flex w-full min-w-0 gap-1.5 overflow-x-auto pb-1" aria-label="Room fixtures">
+            {fixtureChips(scene, palette).map((chip) => (
+              <ChipButton
+                key={chip.id}
+                pressed={selected === chip.id}
+                onClick={() => setSelected((current) => (current === chip.id ? null : chip.id))}
+                swatch={chip.swatch}
+                text={chip.text}
+              />
+            ))}
+          </div>
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-[#0c0b0a] to-transparent" />
         </div>
       ) : null}
     </div>

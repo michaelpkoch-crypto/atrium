@@ -1,4 +1,4 @@
-import { knownProposal, sceneFromPrompt, windowForScene } from "@/lib/agent/propose";
+import { knownProposal, labelForScene, sceneFromPrompt, windowForScene } from "@/lib/agent/propose";
 import { hashString, hslToHex } from "@/lib/atmosphere/color";
 import { PLANS, type ObjectKind } from "@/lib/atmosphere/plans";
 import { roomSceneSchema, type Atmosphere, type Citation, type RoomScene } from "@/lib/atmosphere/schema";
@@ -247,9 +247,12 @@ export function sceneFromPlain(args: {
   colors: string[];
   objects: { kind: ObjectKind; label: string }[];
   assumptions: string[];
+  timeLabel?: string;
 }): RoomScene {
   const plan = PLANS[args.plan];
   const day = args.window === "day-pastel" || args.window === "day-concrete";
+  const timeLabel =
+    args.timeLabel ?? (day ? "Day" : args.window === "dusk" ? "Dusk" : args.window === "rain" ? "Night · rain" : "Night");
   const lights = plan.lights.slice(0, Math.max(3, Math.min(plan.lights.length, args.colors.length + 1))).map((slot, index) => {
     const assumption = args.assumptions[index % args.assumptions.length] ?? "a generic fixture";
     return {
@@ -290,7 +293,7 @@ export function sceneFromPlain(args: {
   return roomSceneSchema.parse({
     plan: args.plan,
     window: args.window,
-    timeLabel: day ? "Day" : args.window === "dusk" ? "Dusk" : args.window === "rain" ? "Rain" : "Night",
+    timeLabel,
     windowBox: plan.windowBox,
     posterBox: plan.posterBox,
     lights,
@@ -328,10 +331,12 @@ function pickPack(prompt: string): Pack {
 
 export function stereotypeBaseline(prompt: string, note?: string): PlainRoom {
   const pack = pickPack(prompt);
-  const window = windowForScene(knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt));
+  const scene = knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt);
+  const window = windowForScene(scene);
   const room = sceneFromPlain({
     plan: pack.plan,
     window,
+    timeLabel: labelForScene(scene),
     poster: pack.poster,
     kicker: "Plain reading",
     subtitle: "No taste graph",
@@ -377,6 +382,7 @@ export function plainRoomFromModel(args: {
   tempoBpm: number;
   texture: TextureKind;
   window: WindowScene;
+  timeLabel?: string;
 }): PlainRoom {
   const assumptions = args.assumptions.map((item) => clip(item, 140)).filter(Boolean).slice(0, 6);
   const safeAssumptions = assumptions.length ? assumptions : ["a generic mood"];
@@ -394,6 +400,7 @@ export function plainRoomFromModel(args: {
     colors: args.colors.length ? args.colors : ["#c4a574", "#8a7058"],
     objects,
     assumptions: safeAssumptions,
+    timeLabel: args.timeLabel,
   });
   const tempo = Math.max(48, Math.min(140, Math.round(args.tempoBpm) || 80));
   return {

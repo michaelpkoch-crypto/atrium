@@ -52,6 +52,22 @@ describe("Qloo response parser", () => {
     });
   });
 
+  it("reads explainability outside query and does not treat the row as its own explainer", () => {
+    const entity = normalizeEntity(
+      {
+        name: "Sezen Aksu",
+        entity_id: "33333333-3333-4333-8333-333333333333",
+        subtype: "urn:entity:artist",
+        affinity: 0.9,
+        explainability: {
+          entities: [{ entity_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Haruki Murakami", score: 0.9 }],
+        },
+      },
+      false,
+    );
+    expect(entity?.explainers).toEqual([{ id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Haruki Murakami", score: 0.9 }]);
+  });
+
   it("reads a search hit that uses types[] and refuses non-https images", () => {
     const [row] = unwrapEntities({
       results: [

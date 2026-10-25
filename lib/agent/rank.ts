@@ -99,91 +99,162 @@ export function relevantPlaces(prompt: string, places: TasteEntity[]): TasteEnti
   });
 }
 
-/** Time, place, and generic music words are not a shared genre. Classical, jazz, and piano are. */
-const NOT_SHARED = new Set([
-  "music",
-  "musician",
-  "artist",
-  "song",
-  "songs",
-  "album",
-  "band",
-  "soundtrack",
-  "score",
-  "film",
-  "movie",
-  "cinema",
-  "composer",
-  "orchestra",
-  "pop",
-  "rock",
-  "singer",
-  "vocal",
-  "vocals",
-  "instrumental",
-  "theme",
-  "english",
-  "american",
-  "turkish",
-  "japan",
-  "japanese",
-  "french",
-  "british",
-  "italian",
-  "night",
-  "day",
-  "dusk",
-  "rain",
-  "live",
-  "male",
-  "female",
-  "vinyl",
-  "novel",
-  "indie",
+/**
+ * Genres and aesthetic moods that can keep a neighbor. Literature, lyrical, modal,
+ * pop, rock, and singer-songwriter are not in this set: a stamped Jazz tag still
+ * has to come from the music seed, not from the novelist.
+ */
+const COUNTABLE = new Set([
+  "jazz",
+  "piano",
+  "ambient",
+  "classical",
+  "electronic",
+  "funk",
+  "disco",
+  "soul",
+  "blues",
+  "bossa",
+  "techno",
+  "house",
+  "opera",
+  "samba",
+  "synth",
+  "synthesizer",
+  "hiphop",
+  "lofi",
+  "symmetry",
+  "pastel",
+  "neon",
+  "noir",
+  "retro",
+  "crime",
+  "anime",
+  "ghibli",
+  "regency",
+  "romance",
+  "chrome",
+  "brunch",
+  "diner",
+  "bathhouse",
+  "steam",
+  "hojicha",
 ]);
 
+export type ArtistRankRow = {
+  name: string;
+  kept: boolean;
+  via: string;
+};
+
 /**
- * Seed artists stay. A neighbor stays only with an exact genre or mood token in common
- * (jazz, piano, ambient, classical, symmetry). A shorter list is better than Turkish pop
- * after Bill Evans. Bridgerton still keeps its two audience crossovers.
+ * Seed artists stay. A neighbor stays when an allowlisted token overlaps the music
+ * seeds, the person seeds, or the mood. If explainability names a person and not
+ * the music seed, the overlap has to be that person's own token (symmetry on Wes).
+ * Jazz on a Turkish singer whose only explainer is Murakami is dropped. Bridgerton
+ * still keeps its two audience crossovers. This runs on the rows insights returned,
+ * including rows served from the cache.
  */
-export function rankInsightArtists(artists: TasteEntity[], seeds: TasteEntity[], proposal: Proposal, prompt: string): TasteEntity[] {
+export function rankInsightArtists(
+  artists: TasteEntity[],
+  seeds: TasteEntity[],
+  proposal: Proposal,
+  prompt: string,
+): { artists: TasteEntity[]; report: ArtistRankRow[] } {
+  const musicIds = new Set(seeds.filter((seed) => seed.type.includes("artist")).map((seed) => seed.id));
+  const personIds = new Set(seeds.filter((seed) => seed.type.includes("person")).map((seed) => seed.id));
+  const personTokens = new Map(seeds.filter((seed) => personIds.has(seed.id)).map((seed) => [seed.id, new Set(countableTokens(seed))]));
+  const wanted = new Set([
+    ...seeds.filter((seed) => musicIds.has(seed.id) || personIds.has(seed.id)).flatMap(countableTokens),
+    ...proposal.moodTags.flatMap((tag) => countableFrom(tag)),
+  ]);
   const seedIds = new Set(seeds.map((seed) => seed.id));
-  const wanted = new Set([...seeds.flatMap(sharedTokens), ...proposal.moodTags.flatMap((tag) => sharedTokensFrom(tag))]);
   const anchored = artists.filter((artist) => seedIds.has(artist.id));
   const scored = artists
     .filter((artist) => !seedIds.has(artist.id))
-    .map((artist) => {
-      const overlap = sharedTokens(artist).filter((token) => wanted.has(token)).length;
-      return { artist, overlap, affinity: artist.affinity ?? 0 };
-    });
+    .map((artist) => ({
+      artist,
+      overlap: countableTokens(artist).filter((token) => wanted.has(token)),
+      affinity: artist.affinity ?? 0,
+    }));
   const aligned = scored
-    .filter((row) => row.overlap > 0)
-    .sort((a, b) => b.overlap - a.overlap || b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
+    .filter((row) => row.overlap.length > 0)
+    .map((row) => ({ ...row, decision: attribute(row.artist, row.overlap, seeds, musicIds, personIds, personTokens) }))
+    .sort((a, b) => Number(b.decision.keep) - Number(a.decision.keep) || b.overlap.length - a.overlap.length || b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
   const surprises = scored
-    .filter((row) => row.overlap === 0 && row.affinity >= 0.84)
+    .filter((row) => row.overlap.length === 0 && row.affinity >= 0.84)
     .sort((a, b) => b.affinity - a.affinity || a.artist.name.localeCompare(b.artist.name));
   const audience = /bridgerton/i.test(prompt) && surprises.length >= 2 ? surprises.slice(0, 2) : [];
+  const audienceIds = new Set(audience.map((row) => row.artist.id));
+
   const picked: TasteEntity[] = [];
-  for (const artist of [...anchored, ...aligned.map((row) => row.artist), ...audience.map((row) => row.artist)]) {
-    if (picked.some((item) => item.id === artist.id)) continue;
+  const report: ArtistRankRow[] = [];
+  const dropped: ArtistRankRow[] = [];
+  const take = (artist: TasteEntity, via: string, kept: boolean) => {
+    const row = { name: artist.name, kept, via };
+    if (!kept) {
+      dropped.push(row);
+      return;
+    }
+    if (picked.some((item) => item.id === artist.id)) return;
+    if (picked.length >= 4) {
+      dropped.push({ name: artist.name, kept: false, via });
+      return;
+    }
     picked.push(artist);
-    if (picked.length >= 4) break;
+    report.push(row);
+  };
+
+  for (const artist of anchored) take(artist, "seed", true);
+  for (const row of aligned) {
+    if (row.decision.keep) take(row.artist, row.decision.via, true);
+    else dropped.push({ name: row.artist.name, kept: false, via: row.decision.via });
   }
-  return picked;
+  for (const row of audience) take(row.artist, "audience crossover", true);
+  for (const row of scored) {
+    if (picked.some((item) => item.id === row.artist.id) || audienceIds.has(row.artist.id)) continue;
+    if (dropped.some((item) => item.name === row.artist.name)) continue;
+    dropped.push({ name: row.artist.name, kept: false, via: "no shared genre" });
+  }
+  return { artists: picked, report: [...report, ...dropped] };
 }
 
-function sharedTokens(entity: TasteEntity): string[] {
-  return entity.tags.flatMap((tag) => sharedTokensFrom(tag.name));
+function attribute(
+  artist: TasteEntity,
+  overlap: string[],
+  seeds: TasteEntity[],
+  musicIds: Set<string>,
+  personIds: Set<string>,
+  personTokens: Map<string, Set<string>>,
+): { keep: boolean; via: string } {
+  const listed = overlap.slice(0, 3).join(", ");
+  const seedIds = new Set(seeds.map((seed) => seed.id));
+  const explained = artist.explainers
+    .filter((row) => seedIds.has(row.id))
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  if (!explained.length) return { keep: true, via: `${listed} (no explainer)` };
+  const top = explained[0].score;
+  const music = explained.filter((row) => musicIds.has(row.id) && row.score >= top - 0.05);
+  if (music.length) return { keep: true, via: `${listed} (${music[0].name})` };
+  const people = explained.filter((row) => personIds.has(row.id) && row.score >= top - 0.05);
+  if (people.length) {
+    const matched = people.find((person) => overlap.some((token) => personTokens.get(person.id)?.has(token)));
+    if (matched) return { keep: true, via: `${listed} (${matched.name})` };
+    return { keep: false, via: `${listed} from ${people[0].name}, not a music seed` };
+  }
+  return { keep: true, via: `${listed} (${explained[0].name})` };
 }
 
-function sharedTokensFrom(name: string): string[] {
-  const out: string[] = [];
-  for (const token of tokens(humanizeTagName(name))) {
-    if (token.length <= 3 || NOT_SHARED.has(token)) continue;
-    out.push(token);
-  }
-  return out;
+function countableTokens(entity: TasteEntity): string[] {
+  return unique(entity.tags.flatMap((tag) => countableFrom(tag.name)));
+}
+
+function countableFrom(name: string): string[] {
+  return tokens(humanizeTagName(name)).filter((token) => COUNTABLE.has(token));
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 export function keepInsightRows(entities: TasteEntity[]): TasteEntity[] {

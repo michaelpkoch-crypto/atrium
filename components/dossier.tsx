@@ -196,7 +196,7 @@ function RoomDossier({
         <Domain label="Places" rows={graph.places} />
         <Domain label="Brands" rows={graph.brands} />
         <Domain label="Books" rows={graph.books} />
-        <Domain label="Movies" rows={graph.movies} />
+        <Domain label="Films" rows={graph.movies} />
       </Section>
 
       <Section title="Tag signals">
