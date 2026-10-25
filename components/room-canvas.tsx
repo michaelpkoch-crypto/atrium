@@ -1,0 +1,669 @@
+"use client";
+
+import { useId, useState, type ReactNode } from "react";
+
+import { hexToRgb } from "@/lib/atmosphere/color";
+import type { RoomLight, RoomObject, RoomScene } from "@/lib/atmosphere/schema";
+import type { WindowScene } from "@/lib/atmosphere/families";
+import { provenanceLine } from "@/components/labels";
+
+type Palette = {
+  primary: string;
+  secondary: string;
+  accent: string;
+  ambient: string;
+  ink: string;
+};
+
+function tint(hex: string, amount: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  const channel = (value: number) => Math.round(value + (255 - value) * amount).toString(16).padStart(2, "0");
+  return `#${channel(r)}${channel(g)}${channel(b)}`;
+}
+
+function shade(hex: string, amount: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  const channel = (value: number) => Math.round(value * (1 - amount)).toString(16).padStart(2, "0");
+  return `#${channel(r)}${channel(g)}${channel(b)}`;
+}
+
+function wrap(value: string, size: number, lines: number): string[] {
+  const words = value.split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > size && current) {
+      out.push(current);
+      current = word;
+      if (out.length === lines) break;
+    } else {
+      current = next;
+    }
+  }
+  if (current && out.length < lines) out.push(current);
+  if (out.length === lines && words.join(" ").length > out.join(" ").length) {
+    out[lines - 1] = `${out[lines - 1].slice(0, Math.max(0, size - 1))}…`;
+  }
+  return out;
+}
+
+export function RoomFrame({
+  scene,
+  palette,
+  tempoBpm,
+  interactive = true,
+  label,
+}: {
+  scene: RoomScene;
+  palette: Palette;
+  tempoBpm: number;
+  interactive?: boolean;
+  label: string;
+}) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const day = scene.window === "day-pastel" || scene.window === "day-concrete";
+  const selectedLight = scene.lights.find((light) => light.id === selected);
+  const selectedObject = scene.objects.find((object) => object.id === selected);
+  const selectedDisplay = selected === "display" ? scene.display : null;
+  const chip = selectedLight
+    ? { title: selectedLight.label, citation: selectedLight.citation }
+    : selectedObject
+      ? { title: selectedObject.label, citation: selectedObject.citation }
+      : selectedDisplay
+        ? { title: selectedDisplay.title, citation: selectedDisplay.citation }
+        : null;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <figure
+        className="relative overflow-hidden rounded-xl border border-white/10"
+        style={{ background: day ? tint(palette.ambient, 0.04) : shade(palette.ambient, 0.2), ["--room-pulse" as string]: `${Math.max(0.55, 60 / tempoBpm)}s` }}
+      >
+        <RoomSvg
+          scene={scene}
+          palette={palette}
+          label={label}
+          selected={selected}
+          interactive={interactive}
+          onSelect={(id) => setSelected((current) => (current === id ? null : id))}
+          onClear={() => setSelected(null)}
+        />
+        {interactive && chip ? (
+          <figcaption className="absolute inset-x-2 bottom-2 z-10 rounded-lg border border-white/15 bg-black/80 p-2.5 text-left shadow-lg backdrop-blur-md">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs font-medium text-white">{chip.title}</p>
+              <button type="button" className="text-xs text-white/70" onClick={() => setSelected(null)} aria-label="Close provenance">
+                Close
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] leading-4 text-white/85">{provenanceLine(chip.citation)}</p>
+          </figcaption>
+        ) : null}
+      </figure>
+      {interactive ? (
+        <div className="flex gap-1.5 overflow-x-auto pb-1" aria-label="Room fixtures">
+          <ChipButton
+            pressed={selected === "display"}
+            onClick={() => setSelected((current) => (current === "display" ? null : "display"))}
+            swatch={palette.accent}
+            text={scene.display.title}
+          />
+          {scene.lights.map((light) => (
+            <ChipButton
+              key={light.id}
+              pressed={selected === light.id}
+              onClick={() => setSelected((current) => (current === light.id ? null : light.id))}
+              swatch={light.color}
+              text={light.label}
+            />
+          ))}
+          {scene.objects.map((object) => (
+            <ChipButton
+              key={object.id}
+              pressed={selected === object.id}
+              onClick={() => setSelected((current) => (current === object.id ? null : object.id))}
+              swatch={palette.secondary}
+              text={object.label}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ChipButton({
+  pressed,
+  onClick,
+  swatch,
+  text,
+}: {
+  pressed: boolean;
+  onClick: () => void;
+  swatch: string;
+  text: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-left text-[11px] ${pressed ? "border-white/70 bg-white/15 text-white" : "border-white/15 bg-white/5 text-white/80"}`}
+    >
+      <span className="size-2.5 rounded-full" style={{ background: swatch }} />
+      <span className="max-w-28 truncate">{text}</span>
+    </button>
+  );
+}
+
+function RoomSvg({
+  scene,
+  palette,
+  label,
+  selected,
+  interactive,
+  onSelect,
+  onClear,
+}: {
+  scene: RoomScene;
+  palette: Palette;
+  label: string;
+  selected: string | null;
+  interactive: boolean;
+  onSelect: (id: string) => void;
+  onClear: () => void;
+}) {
+  const uid = useId().replace(/:/g, "");
+  const day = scene.window === "day-pastel" || scene.window === "day-concrete";
+  const wallTop = day ? tint(palette.ambient, 0.06) : tint(palette.ambient, 0.34);
+  const wallBottom = day ? shade(palette.ambient, 0.08) : tint(palette.ambient, 0.08);
+  const floor = day ? shade(palette.ambient, 0.22) : shade(palette.primary, 0.72);
+  const floorFront = day ? shade(palette.ambient, 0.32) : shade(palette.primary, 0.55);
+  const wood = day ? "#6a5346" : "#3a2a22";
+
+  return (
+    <svg viewBox="0 0 1200 760" className="aspect-[5/4] w-full sm:aspect-[16/10]" role="img" aria-label={label} onClick={onClear}>
+      <defs>
+        <linearGradient id={`${uid}-wall`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={wallTop} />
+          <stop offset="1" stopColor={wallBottom} />
+        </linearGradient>
+        <linearGradient id={`${uid}-floor`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={floor} />
+          <stop offset="1" stopColor={floorFront} />
+        </linearGradient>
+        <filter id={`${uid}-grain`}>
+          <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch" />
+          <feColorMatrix type="saturate" values="0" />
+        </filter>
+        <clipPath id={`${uid}-win`}>
+          <rect x={scene.windowBox.x} y={scene.windowBox.y} width={scene.windowBox.w} height={scene.windowBox.h} rx="2" />
+        </clipPath>
+        {scene.lights.map((light) => (
+          <radialGradient key={light.id} id={`${uid}-${light.id}`} cx="50%" cy="50%" r="50%">
+            <stop offset="0" stopColor={light.color} stopOpacity={0.2 + light.intensity * 0.65} />
+            <stop offset="1" stopColor={light.color} stopOpacity="0" />
+          </radialGradient>
+        ))}
+      </defs>
+
+      <rect width="1200" height="500" fill={`url(#${uid}-wall)`} />
+      <rect width="1200" height="500" filter={`url(#${uid}-grain)`} opacity={day ? 0.05 : 0.12} />
+      <rect width="1200" height="26" fill="#000" opacity={day ? 0.08 : 0.38} />
+      <polygon points="0,500 1200,500 1200,760 0,760" fill={`url(#${uid}-floor)`} />
+      {Array.from({ length: 8 }, (_, index) => (
+        <line key={index} x1={index * 160} y1="500" x2={index * 190 - 80} y2="760" stroke={wood} strokeOpacity={day ? 0.25 : 0.35} />
+      ))}
+
+      <WindowView uid={uid} scene={scene.window} box={scene.windowBox} accent={palette.accent} />
+      <Poster box={scene.posterBox} display={scene.display} palette={palette} day={day} selected={selected === "display"} />
+      {interactive ? (
+        <Hit id="display" label={`Display, ${scene.display.title}`} selected={selected === "display"} onSelect={onSelect}>
+          <rect x={scene.posterBox.x} y={scene.posterBox.y} width={scene.posterBox.w} height={scene.posterBox.h} fill="transparent" />
+        </Hit>
+      ) : null}
+
+      {scene.lights.map((light) => (
+        <Glow key={`glow-${light.id}`} uid={uid} light={light} />
+      ))}
+
+      {scene.plan === "bath" ? <Steam x={380} y={520} /> : null}
+      {scene.objects.map((object) => (
+        <Piece key={object.id} object={object} palette={palette} day={day} selected={selected === object.id} interactive={interactive} onSelect={onSelect} />
+      ))}
+      {scene.lights.map((light) => (
+        <Fixture key={light.id} light={light} selected={selected === light.id} interactive={interactive} onSelect={onSelect} />
+      ))}
+
+      <rect y="488" width="1200" height="14" fill="#000" opacity={day ? 0.12 : 0.45} />
+      <text x="28" y="478" fill={day ? "#3a312c" : "#f4efe6"} opacity="0.7" fontSize="18" fontFamily="ui-monospace, monospace">
+        {scene.timeLabel}
+      </text>
+    </svg>
+  );
+}
+
+function Hit({
+  id,
+  label,
+  selected,
+  onSelect,
+  children,
+}: {
+  id: string;
+  label: string;
+  selected: boolean;
+  onSelect: (id: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <g
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      aria-pressed={selected}
+      className="cursor-pointer"
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect(id);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(id);
+        }
+      }}
+    >
+      {children}
+    </g>
+  );
+}
+
+function Glow({ uid, light }: { uid: string; light: RoomLight }) {
+  const wide = light.kind === "string" || light.kind === "led-strip";
+  const cx = wide && light.x2 ? (light.x + light.x2) / 2 : light.x;
+  const rx = wide && light.x2 ? Math.abs(light.x2 - light.x) / 2 : 70 + light.intensity * 80;
+  const ry = wide ? 36 + light.intensity * 20 : 50 + light.intensity * 40;
+  return (
+    <ellipse
+      cx={cx}
+      cy={light.y + (light.kind === "led-strip" ? 8 : 28)}
+      rx={rx}
+      ry={ry}
+      fill={`url(#${uid}-${light.id})`}
+      className={light.flicker > 0.5 ? "room-flicker" : "room-pulse"}
+    />
+  );
+}
+
+function WindowView({
+  uid,
+  scene,
+  box,
+  accent,
+}: {
+  uid: string;
+  scene: WindowScene;
+  box: RoomScene["windowBox"];
+  accent: string;
+}) {
+  return (
+    <g>
+      <rect x={box.x - 10} y={box.y - 10} width={box.w + 20} height={box.h + 24} rx="3" fill="#1c1612" />
+      <g clipPath={`url(#${uid}-win)`}>
+        <Sky scene={scene} box={box} accent={accent} />
+      </g>
+      <line x1={box.x + box.w / 2} y1={box.y} x2={box.x + box.w / 2} y2={box.y + box.h} stroke="#1c1612" strokeWidth="6" />
+      <line x1={box.x} y1={box.y + box.h / 2} x2={box.x + box.w} y2={box.y + box.h / 2} stroke="#1c1612" strokeWidth="6" />
+      <rect x={box.x - 14} y={box.y + box.h} width={box.w + 28} height="12" fill="#2a221c" />
+    </g>
+  );
+}
+
+function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windowBox"]; accent: string }) {
+  if (scene === "dusk") {
+    return (
+      <>
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#e7a15a" />
+        <rect x={box.x} y={box.y + box.h * 0.45} width={box.w} height={box.h * 0.55} fill="#c46b5a" />
+        <circle cx={box.x + box.w * 0.72} cy={box.y + box.h * 0.62} r={Math.min(36, box.h * 0.18)} fill="#f6d7a2" />
+        <path d={`M${box.x} ${box.y + box.h} L${box.x + box.w * 0.2} ${box.y + box.h * 0.62} L${box.x + box.w * 0.45} ${box.y + box.h} Z`} fill="#5d6a52" />
+        <path d={`M${box.x + box.w * 0.35} ${box.y + box.h} L${box.x + box.w * 0.62} ${box.y + box.h * 0.5} L${box.x + box.w} ${box.y + box.h} Z`} fill="#3e4a3c" />
+      </>
+    );
+  }
+  if (scene === "day-pastel") {
+    return (
+      <>
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#f4d7c4" />
+        <circle cx={box.x + box.w * 0.5} cy={box.y + 48} r="26" fill="#fff4d2" />
+        <rect x={box.x + box.w * 0.3} y={box.y + box.h * 0.42} width={box.w * 0.4} height={box.h * 0.58} fill="#f2b7c4" />
+        <polygon points={`${box.x + box.w * 0.3},${box.y + box.h * 0.42} ${box.x + box.w * 0.5},${box.y + box.h * 0.22} ${box.x + box.w * 0.7},${box.y + box.h * 0.42}`} fill="#f7c3a0" />
+      </>
+    );
+  }
+  if (scene === "day-concrete") {
+    return (
+      <>
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#c5c0b6" />
+        <rect x={box.x + 18} y={box.y + box.h * 0.35} width={box.w - 36} height={box.h * 0.65} fill="#8e8a84" />
+        <rect x={box.x + 28} y={box.y + box.h * 0.48} width="14" height="18" fill="#d9d4cc" />
+        <rect x={box.x + 52} y={box.y + box.h * 0.48} width="14" height="18" fill="#d9d4cc" />
+      </>
+    );
+  }
+  if (scene === "rain") {
+    return (
+      <>
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#243246" />
+        <rect x={box.x} y={box.y + box.h * 0.62} width={box.w} height={box.h * 0.38} fill="#1a2433" />
+        {Array.from({ length: 14 }, (_, index) => (
+          <line
+            key={index}
+            className="room-rain"
+            x1={box.x + ((index * 37) % box.w)}
+            y1={box.y + (index % 5) * 12}
+            x2={box.x + ((index * 37) % box.w) - 8}
+            y2={box.y + 36 + (index % 5) * 12}
+            stroke="#d5e2ee"
+            strokeWidth="2"
+            opacity="0.75"
+          />
+        ))}
+      </>
+    );
+  }
+  if (scene === "neon-city") {
+    return (
+      <>
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#0d1524" />
+        <rect x={box.x} y={box.y + box.h * 0.72} width={box.w} height="3" fill={accent} opacity="0.85" />
+        {Array.from({ length: 6 }, (_, index) => (
+          <rect key={index} x={box.x + 16 + index * (box.w / 7)} y={box.y + 30 + (index % 3) * 18} width={18} height={box.h * 0.62 - (index % 3) * 16} fill={index % 2 ? "#123" : "#1a2740"} stroke={accent} strokeOpacity="0.45" />
+        ))}
+      </>
+    );
+  }
+  return (
+    <>
+      <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#141a28" />
+      <circle cx={box.x + box.w * 0.78} cy={box.y + 36} r="10" fill="#f4efe6" opacity="0.85" />
+      {Array.from({ length: 5 }, (_, index) => (
+        <rect key={index} x={box.x + 20 + index * (box.w / 6)} y={box.y + box.h * 0.4} width={box.w / 8} height={box.h * 0.6} fill="#0c1018" />
+      ))}
+      {Array.from({ length: 8 }, (_, index) => (
+        <rect key={`w${index}`} x={box.x + 28 + (index % 5) * (box.w / 6)} y={box.y + box.h * 0.5 + Math.floor(index / 5) * 22} width="6" height="8" fill="#e7c27a" opacity="0.8" />
+      ))}
+    </>
+  );
+}
+
+function Poster({
+  box,
+  display,
+  palette,
+  day,
+  selected,
+}: {
+  box: RoomScene["posterBox"];
+  display: RoomScene["display"];
+  palette: Palette;
+  day: boolean;
+  selected: boolean;
+}) {
+  const lines = wrap(display.title, Math.max(8, Math.floor(box.w / 16)), 3);
+  const paper = day ? "#f7f1e8" : "#16130f";
+  const ink = day ? "#241c18" : "#f4efe6";
+  return (
+    <g>
+      <rect x={box.x - 8} y={box.y - 8} width={box.w + 16} height={box.h + 16} fill={day ? "#fff" : "#0c0b0a"} stroke={selected ? "#fff" : palette.accent} strokeWidth={selected ? 4 : 2} />
+      <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={paper} />
+      <rect x={box.x} y={box.y} width={box.w} height="10" fill={palette.primary} />
+      <rect x={box.x} y={box.y + box.h - 28} width={box.w} height="28" fill={palette.accent} opacity="0.85" />
+      <text x={box.x + 12} y={box.y + 32} fill={ink} opacity="0.6" fontSize="12" fontFamily="ui-monospace, monospace">
+        {display.kicker.slice(0, 22)}
+      </text>
+      {lines.map((line, index) => (
+        <text key={line} x={box.x + 12} y={box.y + 70 + index * 34} fill={ink} fontSize={lines.length > 2 ? 22 : 28} fontFamily="Georgia, serif">
+          {line}
+        </text>
+      ))}
+    </g>
+  );
+}
+
+function Fixture({
+  light,
+  selected,
+  interactive,
+  onSelect,
+}: {
+  light: RoomLight;
+  selected: boolean;
+  interactive: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const body = (
+    <g className={light.kind === "string" ? "room-drift" : undefined}>
+      <LightShape light={light} />
+      {selected ? <circle cx={light.x2 ? (light.x + light.x2) / 2 : light.x} cy={light.y} r="18" fill="none" stroke="#fff" strokeWidth="2" /> : null}
+    </g>
+  );
+  if (!interactive) return body;
+  return (
+    <Hit id={light.id} label={`${light.kind}, ${light.label}`} selected={selected} onSelect={onSelect}>
+      {body}
+      <rect x={Math.min(light.x, light.x2 ?? light.x) - 20} y={light.y - 30} width={Math.abs((light.x2 ?? light.x) - light.x) + 40} height="70" fill="transparent" />
+    </Hit>
+  );
+}
+
+function LightShape({ light }: { light: RoomLight }) {
+  if (light.kind === "string" && light.x2) {
+    const span = light.x2 - light.x;
+    return (
+      <g>
+        <path d={`M${light.x} ${light.y} Q ${(light.x + light.x2) / 2} ${light.y + 18} ${light.x2} ${light.y}`} fill="none" stroke={light.color} strokeWidth="2" />
+        {Array.from({ length: 8 }, (_, index) => {
+          const x = light.x + (span * (index + 0.5)) / 8;
+          return <circle key={index} cx={x} cy={light.y + 8} r="5" fill={light.color} />;
+        })}
+      </g>
+    );
+  }
+  if (light.kind === "led-strip" && light.x2) {
+    return <rect x={light.x} y={light.y} width={light.x2 - light.x} height="6" rx="3" fill={light.color} />;
+  }
+  if (light.kind === "neon") {
+    return (
+      <g>
+        <rect x={light.x - 46} y={light.y - 16} width="92" height="32" rx="8" fill="none" stroke={light.color} strokeWidth="4" />
+        <text x={light.x} y={light.y + 5} textAnchor="middle" fill={light.color} fontSize="12" fontFamily="ui-monospace, monospace">
+          {light.label.slice(0, 8)}
+        </text>
+      </g>
+    );
+  }
+  if (light.kind === "lantern") {
+    return (
+      <g>
+        <line x1={light.x} y1="26" x2={light.x} y2={light.y - 22} stroke={light.color} strokeWidth="2" />
+        <rect x={light.x - 16} y={light.y - 22} width="32" height="40" rx="4" fill={light.color} opacity="0.9" />
+        <line x1={light.x - 16} y1={light.y - 8} x2={light.x + 16} y2={light.y - 8} stroke="#1a120c" strokeOpacity="0.4" />
+        <line x1={light.x - 16} y1={light.y + 4} x2={light.x + 16} y2={light.y + 4} stroke="#1a120c" strokeOpacity="0.4" />
+      </g>
+    );
+  }
+  if (light.kind === "floor-lamp") {
+    return (
+      <g>
+        <line x1={light.x} y1={light.y} x2={light.x} y2="500" stroke="#cfc4b4" strokeWidth="3" />
+        <polygon points={`${light.x - 22},${light.y + 8} ${light.x},${light.y - 28} ${light.x + 22},${light.y + 8}`} fill={light.color} />
+      </g>
+    );
+  }
+  if (light.kind === "table-lamp") {
+    return (
+      <g>
+        <rect x={light.x - 8} y={light.y + 8} width="16" height="10" fill="#cfc4b4" />
+        <polygon points={`${light.x - 20},${light.y + 8} ${light.x},${light.y - 20} ${light.x + 20},${light.y + 8}`} fill={light.color} />
+      </g>
+    );
+  }
+  if (light.kind === "sconce") {
+    return (
+      <g>
+        <rect x={light.x - 4} y={light.y - 4} width="18" height="8" fill="#cfc4b4" />
+        <path d={`M${light.x} ${light.y} A 18 18 0 0 1 ${light.x + 22} ${light.y + 16}`} fill="none" stroke={light.color} strokeWidth="6" />
+      </g>
+    );
+  }
+  return (
+    <g>
+      <line x1={light.x} y1="26" x2={light.x} y2={light.y - 16} stroke="#d9d0c4" strokeWidth="2" />
+      <polygon points={`${light.x - 26},${light.y + 10} ${light.x},${light.y - 18} ${light.x + 26},${light.y + 10}`} fill={light.color} />
+      <ellipse cx={light.x} cy={light.y + 12} rx="16" ry="5" fill={light.color} opacity="0.85" />
+    </g>
+  );
+}
+
+function Piece({
+  object,
+  palette,
+  day,
+  selected,
+  interactive,
+  onSelect,
+}: {
+  object: RoomObject;
+  palette: Palette;
+  day: boolean;
+  selected: boolean;
+  interactive: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const fill = day ? "#3d322c" : "#221912";
+  const body = (
+    <g>
+      <ObjectShape kind={object.kind} x={object.x} y={object.y} fill={fill} accent={palette.accent} />
+      {selected ? <circle cx={object.x} cy={object.y - 30} r="26" fill="none" stroke="#fff" strokeWidth="2" /> : null}
+    </g>
+  );
+  if (!interactive) return body;
+  return (
+    <Hit id={object.id} label={`${object.kind}, ${object.label}`} selected={selected} onSelect={onSelect}>
+      {body}
+      <rect x={object.x - 40} y={object.y - 70} width="80" height="80" fill="transparent" />
+    </Hit>
+  );
+}
+
+function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x: number; y: number; fill: string; accent: string }) {
+  if (kind === "bar") {
+    return (
+      <g>
+        <rect x={x - 90} y={y - 46} width="180" height="18" rx="3" fill={fill} />
+        <rect x={x - 80} y={y - 28} width="160" height="28" fill={shade(fill, 0.2)} />
+        <line x1={x - 70} y1={y + 8} x2={x + 70} y2={y + 8} stroke={accent} strokeWidth="3" />
+      </g>
+    );
+  }
+  if (kind === "sofa") {
+    return (
+      <g>
+        <rect x={x - 80} y={y - 48} width="160" height="42" rx="10" fill={fill} />
+        <rect x={x - 92} y={y - 64} width="22" height="48" rx="6" fill={fill} />
+        <rect x={x + 70} y={y - 64} width="22" height="48" rx="6" fill={fill} />
+      </g>
+    );
+  }
+  if (kind === "chair" || kind === "stool") {
+    return (
+      <g>
+        <rect x={x - 22} y={y - 36} width="44" height="14" rx="3" fill={fill} />
+        {kind === "chair" ? <rect x={x - 22} y={y - 70} width="8" height="36" fill={fill} /> : null}
+        <line x1={x - 14} y1={y - 22} x2={x - 18} y2={y} stroke={fill} strokeWidth="3" />
+        <line x1={x + 14} y1={y - 22} x2={x + 18} y2={y} stroke={fill} strokeWidth="3" />
+      </g>
+    );
+  }
+  if (kind === "tub") {
+    return (
+      <g>
+        <ellipse cx={x} cy={y - 16} rx="78" ry="26" fill={fill} />
+        <ellipse cx={x} cy={y - 22} rx="62" ry="16" fill={accent} opacity="0.55" />
+      </g>
+    );
+  }
+  if (kind === "bench") {
+    return <rect x={x - 70} y={y - 22} width="140" height="14" rx="3" fill={fill} />;
+  }
+  if (kind === "plinth") {
+    return <polygon points={`${x - 50},${y} ${x - 36},${y - 48} ${x + 36},${y - 48} ${x + 50},${y}`} fill={fill} />;
+  }
+  if (kind === "table") {
+    return (
+      <g>
+        <rect x={x - 54} y={y - 28} width="108" height="10" rx="2" fill={fill} />
+        <line x1={x - 40} y1={y - 18} x2={x - 46} y2={y} stroke={fill} strokeWidth="4" />
+        <line x1={x + 40} y1={y - 18} x2={x + 46} y2={y} stroke={fill} strokeWidth="4" />
+      </g>
+    );
+  }
+  if (kind === "book") {
+    return (
+      <g>
+        <rect x={x - 18} y={y - 14} width="36" height="10" fill={accent} />
+        <rect x={x - 16} y={y - 22} width="32" height="10" fill="#f4efe6" />
+      </g>
+    );
+  }
+  if (kind === "record" || kind === "speaker") {
+    return (
+      <g>
+        <rect x={x - 22} y={y - 36} width="44" height="36" rx="4" fill={fill} />
+        <circle cx={x} cy={y - 18} r="10" fill="none" stroke={accent} strokeWidth="3" />
+      </g>
+    );
+  }
+  if (kind === "bottle" || kind === "glass" || kind === "cup") {
+    return (
+      <g>
+        <path d={`M${x - 8} ${y - 28} L${x - 12} ${y} L${x + 12} ${y} L${x + 8} ${y - 28} Z`} fill={kind === "bottle" ? accent : "#d9efe8"} opacity="0.9" />
+        {kind === "bottle" ? <rect x={x - 3} y={y - 40} width="6" height="12" fill={accent} /> : null}
+      </g>
+    );
+  }
+  if (kind === "cake") {
+    return (
+      <g>
+        <rect x={x - 16} y={y - 20} width="32" height="16" rx="4" fill={accent} />
+        <circle cx={x} cy={y - 22} r="3" fill="#fff" />
+      </g>
+    );
+  }
+  if (kind === "textile") {
+    return <rect x={x - 18} y={y - 70} width="36" height="64" fill={accent} opacity="0.85" />;
+  }
+  if (kind === "plant") {
+    return (
+      <g>
+        <rect x={x - 10} y={y - 16} width="20" height="16" fill={fill} />
+        <circle cx={x} cy={y - 30} r="16" fill="#3f6b45" />
+        <circle cx={x - 12} cy={y - 22} r="10" fill="#4d7d52" />
+      </g>
+    );
+  }
+  return <rect x={x - 20} y={y - 20} width="40" height="20" fill={fill} />;
+}
+
+function Steam({ x, y }: { x: number; y: number }) {
+  return (
+    <g className="room-steam" opacity="0.45">
+      <ellipse cx={x} cy={y} rx="18" ry="8" fill="#f4efe6" />
+      <ellipse cx={x + 24} cy={y + 10} rx="14" ry="6" fill="#f4efe6" />
+      <ellipse cx={x - 16} cy={y + 6} rx="12" ry="5" fill="#f4efe6" />
+    </g>
+  );
+}

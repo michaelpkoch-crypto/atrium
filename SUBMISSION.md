@@ -1,61 +1,86 @@
 # Atrium — Devpost draft
 
-Paste the sections below into the Devpost form. Replace the bracketed lines once the public URL and repository exist.
+The working demo is the Vercel deployment. Production and Preview both have `QLOO_API_KEY` and `OPENAI_API_KEY`. The repository stays private. Put the public deployment URL on the form. There is no login.
 
-- Demo: [public URL]
-- Repository: [public GitHub URL]
+- Demo: the Vercel production URL for this project
+- Repository: private
 - License: MIT (`LICENSE` in the repo root)
 
 ## Tagline
 
-A cultural prompt goes in. Qloo's taste graph comes back as a room: light, sound, drink, and objects, each one citing the entity that earned it.
+A cultural prompt becomes a room. Qloo decides the lamps, the counter, and the sound. The plain model, given the same sentence and no taste graph, does not.
 
-## Inspiration
+## The problem
 
-Agents can describe a mood. They are worse at knowing what that mood sits next to in the culture: which musicians, which bars, which objects. Atrium treats that as a compilation problem. "Blade Runner meets a 1970s jazz bar" should not become a generic cyberpunk palette from a language model's memory. It should become the artists, places, and brands Qloo actually connects to those seeds, then a room built only from that graph.
+A language model can describe "Blade Runner meets a 1970s jazz bar." It reaches for cyan rain and a saxophone. It does not know which artists, which bar, or which tags actually sit next to that taste, or how strongly. Atrium is for someone setting a room at home, and for a bar, a restaurant, or a retail floor that wants the same thing: an ambiance that comes from a taste graph, with a virtual room to judge it in and a bridge to real lights.
 
 ## What it does
 
 1. You type a prompt, or pick one: Blade Runner meets a 1970s jazz bar, a Wes Anderson brunch, reading Murakami on a rainy night, Studio Ghibli bathhouse at dusk.
-2. The orchestrator searches Qloo for the names in the prompt (`GET /search`) and resolves mood words to real tag ids (`GET /v2/tags`). It does not invent tag URNs.
-3. It calls `GET /v2/insights` across artists, places, brands, books, movies, and tags, with `signal.interests.entities` and `signal.interests.tags`, and asks for explainability.
-4. A deterministic compiler turns that graph into versioned JSON: hex palette, visual mode, generative or entity artwork, a WebAudio texture (tempo, scale, frequencies), and lists of music, drinks, and decor. Zod validates the JSON. The same graph always produces the same room.
-5. The browser renders the room and plays the texture after a click. The side panel shows the seeds, the cross-domain rows, the affinity or explainability score, and the exact Qloo calls.
-6. Optional: send the palette to a webhook, a Philips Hue group, or a Home Assistant light. This is off unless configured. A Hue bridge is LAN-only, so a public demo should use a webhook.
+2. `gpt-4.1-mini` chooses the Qloo lookups. It searches names (`GET /search`), resolves mood words to real tag ids (`GET /v2/tags`), selects seeds, then calls `GET /v2/insights` for artists, places, brands, books, movies, and tags. It does not invent tag URNs and it does not write the room JSON.
+3. A deterministic compiler turns that graph into the room. Each lamp, object, and sound layer cites the entity and, when there is one, the tag and affinity. The poster is drawn type. The bed is a pad, a texture, and a pulse, inspired by the artists Qloo returned. Nothing in the audio is a copyrighted recording.
+4. A second call to the same model, with no tools, draws the cliché of the prompt. On a phone you toggle or swipe between the rooms. On a wide screen they sit side by side. The card under them names what Qloo added.
+5. **Send to my real lights** can post the palette to a webhook, a Philips Hue group, or a Home Assistant light. That path is off unless configured. A public demo should use a webhook or a public Home Assistant URL. Hue is LAN-only.
 
-There is no account and no login.
+There is no account.
 
 ## Why this needs Qloo
 
-The compiler has no playlist of its own. Music rows are artist entities from insights. Drinks are chosen from the tags on place entities, and when no drink rule matches, the recommendation is the place itself. Palette hues are a weighted blend of the tags and names Qloo returned. If nothing in the graph matches the palette lexicon, the hue is a stable hash of the top entity id, and the panel says so.
+Take Qloo out and both rooms are the plain model. The product is the gap: Joe Hisaishi and a bathhouse counter instead of "a solo piano and a cute spirit"; Vangelis and a named bar instead of "an unnamed synth composer." The trace shows the calls. The chip on a lamp shows the tag, the affinity, and the entity. If the submission worked the same without Qloo, it would be the wrong thing. The comparison is there so a judge can see that it does not.
 
-Take Qloo out and the room has nothing to cite. A language model could still invent a "Blade Runner jazz bar," and it would look confident. It would not be able to show that Vangelis arrived as an artist affinity from the film while Miles Davis or The Low Room arrived from the jazz tag signal, with the score next to each name. That trace is the product.
+## How Qloo is used
 
-The dossier is deliberately plain about failure. Empty artist results become "No artist affinities" instead of a made-up band. Empty places become "No bar affinities." Mock mode, used until `QLOO_API_KEY` is set, is labeled on the room and on every fixture row. Fixture ids are prefixed `mock:` and are not cached Qloo responses.
+Base URL `https://hackathon.api.qloo.com`, header `X-Api-Key`, server-side only. The client does not call `/recommendations` or `/recs`.
+
+1. `GET /search` resolves names to entity ids.
+2. `GET /v2/tags` resolves mood words to tag ids.
+3. `GET /v2/insights` runs per domain with `signal.interests.entities`, `signal.interests.tags`, and `feature.explainability=true`.
+
+Invalid parameters are omitted rather than sent. Insights rows describe what groups tend to like. The prompt is a cultural description. Personal data is not sent.
+
+### Redacted walkthrough
+
+The shapes below are the labeled fixture in `lib/qloo/fixtures.ts`, used when no key is present. Live payloads are not committed. The hosted app runs the same calls against the hackathon API.
+
+Prompt: `Studio Ghibli bathhouse at dusk`.
+
+- Search resolves the film as a seed.
+- Tag search resolves words such as dusk and bathhouse to tag ids.
+- Artist insights return a score such as Joe Hisaishi. Place insights return a counter such as Bathhouse Tea Counter. Movie, brand, and book insights fill the poster and the shelf.
+- The compiler picks the bath plan and a dusk window from those setting tags, not from a keyword scan of the sentence. Lanterns cite tags such as Anime and Bathhouse. Steam in the bed cites the bath tag. The tempo cites the artist row.
+- The plain model, with no tools, writes a bright daylight room: cel green, a solo piano, a spirit. The diff lists Joe Hisaishi, the tea counter, and the film.
+
+A second example, `Blade Runner meets a 1970s jazz bar`, is a neon room. One lamp cites a neon tag. Another cites a jazz tag, so a warm lamp sits in the cyan room. The plain side stays on cyan rain and a saxophone with no name.
 
 ## How we built it
 
-- Next.js, TypeScript, Tailwind, shadcn/ui.
-- Vercel AI SDK tool calling (`search_taste`, `search_tags`, `select_seeds`, `taste_insights`, `compile_atmosphere`) when `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `AI_GATEWAY_API_KEY` is set. The model is not allowed to author the room JSON. The last tool runs the compiler.
-- The same client methods run in a fixed order when no model key is present, so the demo works before either key arrives.
-- Qloo hackathon host `https://hackathon.api.qloo.com`, header `X-Api-Key`, GET only. Legacy `/recommendations` is not called.
-- WebAudio oscillators, filtered noise, and a tempo LFO. Artwork is generated from the palette, or uses an entity image URL when Qloo returns one.
-- Tests cover compiler determinism, citation integrity, the fixture pipeline for the four example prompts, the live client's URL and header shape, and the dispatch flag.
+- Next.js, TypeScript, Tailwind, shadcn/ui, on Vercel.
+- Vercel AI SDK tool calling: `search_taste`, `search_tags`, `select_seeds`, `taste_insights`, `compile_atmosphere`. The last tool runs the compiler. The plain comparison is `generateText` with `Output.object` and no tools. Default model `gpt-4.1-mini`.
+- With no model key the same Qloo client runs in a fixed order, and the plain side is a labeled cliché. That path is for local development. The hosted app has the key.
+- With no Qloo key the page uses the fixture graph and the badge says Mock fixture.
+- WebAudio: detuned pad, a texture buffer, and a tempo pulse. Artwork is a vector room, not an entity photo.
+- Tests cover compiler output, citation integrity, the four example prompts, the comparison, the client URL and header, and the dispatch flag.
 
 ## Challenges
 
-Hackathon keys do not work on the production or staging hosts, and a wrong host looks like a bad key. The client says so on a 401. Insights silently ignore parameters that are illegal for a `filter.type`, so the client only sends `signal.interests.entities`, `signal.interests.tags`, `take`, and `feature.explainability`, which the entity-type guide allows for these domains. Tag ids come from `/v2/tags` rather than from strings we made up.
+Hackathon keys do not work on the production or staging hosts. A 401 from the client names `hackathon.api.qloo.com`. Insights silently ignore parameters that are illegal for a `filter.type`, so the client only sends the parameters the entity-type guide allows.
 
-A Philips Hue bridge cannot be reached from a hosted website. The public path is a webhook or a Home Assistant URL that is already on the internet. Local Hue still works when the Next.js server is on the same LAN.
+A Philips Hue bridge cannot be reached from a hosted website. The public path is a webhook or a Home Assistant URL that is already on the internet.
+
+The agent and the plain model run together, so `/api/compile` asks for 60 seconds. A plan may cap that lower. The route allows 30 compiles per 10 minutes per IP so a judge can try the examples.
+
+## Known limitations
+
+- Color, tempo, and texture start from a table of tag-name stems. Unknown tags still become lamps, hashed from the tag id, and the provenance says there was no prior.
+- The plain room is live only when a provider key is set. It is set on Production and Preview.
+- Audio is synthesized. It names the Qloo artists it is inspired by. It does not play their recordings.
+- The compiler does not use entity photos.
+- Mock mode is labeled. Fixture ids are prefixed `mock:`.
+- The rate limit is in memory, per server instance.
+- Do not send personal data.
 
 ## What's next
 
-- Swap the fixture graph for live responses as soon as the hackathon key arrives, and confirm explainability rows against real payloads. The parser already accepts `query.affinity` and nested explainability objects.
-- Tune the compiler's drink and decor lexicons against the tag names the live graph actually returns.
-- Add a saved-room link so a judge can reopen a specific compile.
-
-## What the judges need from us
-
-- A public deployment with `QLOO_API_KEY` set and `QLOO_MODE=auto`, so the badge says Live Qloo.
-- This repository public, with `LICENSE` visible.
-- The demo URL in the Devpost form. No login, no allowlist.
+- Point a public webhook at a real floor so "send to my real lights" changes a room a judge can stand in.
+- Save a room link so a compile can be reopened.
+- Let a venue pin a few house entities so the graph starts from the bar's own taste, not only from the prompt.

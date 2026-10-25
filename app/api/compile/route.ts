@@ -8,9 +8,11 @@ import { HttpError, publicErrorMessage, rateLimitResponse, readJsonBody } from "
 
 const WINDOW_MS = 10 * 60_000;
 
+export const maxDuration = 60;
+
 export async function POST(request: Request) {
   await connection();
-  const limited = rateLimitResponse(request, "compile", 12, WINDOW_MS, 80);
+  const limited = rateLimitResponse(request, "compile", 30, WINDOW_MS, 150);
   if (limited) return limited;
 
   try {

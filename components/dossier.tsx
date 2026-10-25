@@ -87,6 +87,18 @@ function RoomDossier({
         )}
       </Section>
 
+      <Section title="Fixtures, and the Qloo row that earned each one">
+        <ul className="space-y-2">
+          {atmosphere.room.lights.map((light) => (
+            <li key={light.id} className="text-xs leading-5 text-white/75">
+              <span className="mr-2 inline-block size-2.5 rounded-full align-middle" style={{ background: light.color }} />
+              <span className="text-white">{light.kind.replace("-", " ")} · {light.label}. </span>
+              {light.citation.detail}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
       <Section title="Palette, and the entity that earned it">
         <div className="grid grid-cols-4 gap-2">
           {atmosphere.palette.reasons.map((reason) => (
@@ -188,10 +200,10 @@ function RoomDossier({
           <p className="text-xs text-white/80">No tag ids were sent. Entity signals were enough.</p>
         )}
         <p className="font-mono text-[10px] leading-4 break-all text-white/75">
-          signal.interests.entities={atmosphere.signals.entityIds.join(",") || "—"}
+          signal.interests.entities={atmosphere.signals.entityIds.join(",") || "none"}
         </p>
         <p className="font-mono text-[10px] leading-4 break-all text-white/75">
-          signal.interests.tags={atmosphere.signals.tagIds.join(",") || "—"}
+          signal.interests.tags={atmosphere.signals.tagIds.join(",") || "none"}
         </p>
       </Section>
 
@@ -226,7 +238,7 @@ function RoomDossier({
           onClick={onDispatch}
           className="border-white/20 bg-transparent text-white hover:bg-white/10"
         >
-          {dispatching ? "Sending…" : "Send this palette"}
+          {dispatching ? "Sending…" : "Send to my real lights"}
         </Button>
         {dispatch.result ? (
           <p className="text-xs text-white/75">

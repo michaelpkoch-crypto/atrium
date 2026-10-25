@@ -1,8 +1,10 @@
+import { compareRooms, stereotypeBaseline, type Comparison, type PlainRoom } from "@/lib/atmosphere/baseline";
 import { compileAtmosphere } from "@/lib/atmosphere/compile";
 import type { Atmosphere } from "@/lib/atmosphere/schema";
 import { readConfig, type AppConfig, type DispatchMode } from "@/lib/config";
 import { NoTasteMatch, PromptError } from "@/lib/agent/errors";
 import { extractQueries, nameScore, tagQueriesFor, tokens } from "@/lib/agent/queries";
+import type { AgentStep } from "@/lib/agent/steps";
 import { hashString } from "@/lib/atmosphere/color";
 import type { QlooTraceCall, TasteClient, TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
 import { redactSecrets } from "@/lib/security/redact";
@@ -47,6 +49,9 @@ export type CompileResult = {
   };
   /** Operator-facing notes that must not relabel live data as mock. */
   warnings: string[];
+  steps: AgentStep[];
+  baseline: PlainRoom;
+  comparison: Comparison;
 };
 
 const INSIGHT_TARGETS = [
@@ -70,6 +75,10 @@ export async function compileFromPrompt(
   const config = readConfig(env);
   const secrets = secretValues(config);
   const client = options?.client ?? (await import("@/lib/qloo")).createTasteClient(env);
+  const baselinePromise =
+    options?.allowLlm !== false && config.llm
+      ? import("@/lib/agent/baseline-model").then((mod) => mod.modelBaseline(cleaned, config.llm!))
+      : Promise.resolve(stereotypeBaseline(cleaned));
 
   let agent: CompileResult["agent"] = {
     kind: "deterministic",
@@ -79,12 +88,14 @@ export async function compileFromPrompt(
   };
 
   let graph: TasteGraph | null = null;
+  let steps: AgentStep[] = [];
   if (options?.allowLlm !== false && config.llm) {
     try {
       const { compileWithModel } = await import("@/lib/agent/llm");
       const modeled = await compileWithModel({ prompt: cleaned, client, llm: config.llm });
-      if (modeled) {
-        graph = modeled;
+      steps = modeled.steps;
+      if (modeled.graph) {
+        graph = modeled.graph;
         agent = { kind: "llm", provider: config.llm.provider, model: config.llm.modelId, fallback: null };
       }
     } catch (error) {
@@ -93,18 +104,22 @@ export async function compileFromPrompt(
   }
 
   if (!graph) {
-    graph = await gatherGraph(client, cleaned);
-    if (agent.kind === "llm") {
+    const gathered = await gatherGraph(client, cleaned);
+    graph = gathered.graph;
+    steps = steps.length ? [...steps, ...gathered.steps] : gathered.steps;
+    if (config.llm && options?.allowLlm !== false) {
       agent = {
         kind: "deterministic",
-        provider: config.llm?.provider ?? null,
-        model: config.llm?.modelId ?? null,
+        provider: config.llm.provider,
+        model: config.llm.modelId,
         fallback: agent.fallback ?? "The model did not produce a compilable taste graph.",
       };
     }
   }
 
   const atmosphere = compileAtmosphere(cleaned, graph);
+  const baseline = await baselinePromise;
+  const comparison = compareRooms(cleaned, atmosphere, baseline);
   return {
     atmosphere,
     graph: {
@@ -129,6 +144,9 @@ export async function compileFromPrompt(
       configured: config.dispatch.configured,
     },
     warnings: liveWarnings(client, graph),
+    steps,
+    baseline,
+    comparison,
   };
 }
 
@@ -157,12 +175,25 @@ function liveWarnings(client: TasteClient, graph: TasteGraph): string[] {
   return [];
 }
 
-export async function gatherGraph(client: TasteClient, prompt: string): Promise<TasteGraph> {
+export async function gatherGraph(client: TasteClient, prompt: string): Promise<{ graph: TasteGraph; steps: AgentStep[] }> {
+  const steps: AgentStep[] = [];
   const queries = extractQueries(prompt);
   const seedMap = new Map<string, { entity: TasteEntity; score: number }>();
 
   for (const query of queries) {
     const hits = await client.search(query, 8);
+    const kept = hits.filter((hit, index) => {
+      const crossScript = !/[a-z]/i.test(query);
+      const lexical = Math.max(hit.matchScore ?? 0, nameScore(query, hit.name));
+      const score = lexical >= 0.45 ? lexical : crossScript && index === 0 ? 0.7 : lexical;
+      return score >= 0.45;
+    });
+    steps.push({
+      why: `Disambiguate “${query}” on the taste graph before asking what sits next to it.`,
+      call: "GET /search",
+      detail: `query=${query}`,
+      result: kept.map((hit) => hit.name).slice(0, 4).join(", ") || "no entity kept",
+    });
     // Latin overlap cannot score a Japanese (or other non-Latin) query against a Romanized Qloo name.
     const crossScript = !/[a-z]/i.test(query);
     hits.forEach((hit, index) => {
@@ -188,17 +219,25 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
     } catch {
       continue;
     }
+    const accepted: string[] = [];
     for (const tag of found) {
       if (!tagFits(query, tag)) continue;
       if (tags.some((existing) => existing.id === tag.id)) continue;
       tags.push(tag);
+      accepted.push(tag.name);
       if (tags.length >= 6) break;
     }
+    steps.push({
+      why: `“${query}” is a mood word. Resolve a real tag id. Atrium does not invent tag URNs.`,
+      call: "GET /v2/tags",
+      detail: `filter.query=${query}`,
+      result: accepted.join(", ") || "no tag",
+    });
     if (tags.length >= 6) break;
   }
 
   if (!seeds.length && !tags.length) {
-    if (client.mode === "mock") return syntheticGraph(prompt);
+    if (client.mode === "mock") return { graph: syntheticGraph(prompt), steps };
     throw new NoTasteMatch(
       "Qloo search returned no entities or tags for that prompt. Try a film, book, artist, or place name.",
     );
@@ -248,18 +287,39 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
   const anyEntities =
     seeds.length + buckets.artists.length + buckets.places.length + buckets.brands.length + buckets.books.length + buckets.movies.length;
   if (!anyEntities) {
-    if (client.mode === "mock") return syntheticGraph(prompt);
+    if (client.mode === "mock") return { graph: syntheticGraph(prompt), steps };
     throw new NoTasteMatch("Qloo accepted the signals but returned no entities to build a room from.");
   }
 
+  const seedNames = seeds.map((seed) => seed.name).join(", ") || "the tag signals";
+  const insightRows: { why: string; detail: string; result: string }[] = [
+    { why: `Which artists sit next to ${seedNames}.`, detail: "filter.type=urn:entity:artist", result: buckets.artists.map((row) => row.name).slice(0, 4).join(", ") },
+    { why: `Which places sit next to ${seedNames}.`, detail: "filter.type=urn:entity:place", result: buckets.places.map((row) => row.name).slice(0, 4).join(", ") },
+    { why: `Which brands sit next to ${seedNames}.`, detail: "filter.type=urn:entity:brand", result: buckets.brands.map((row) => row.name).slice(0, 4).join(", ") },
+    { why: `Which books sit next to ${seedNames}.`, detail: "filter.type=urn:entity:book", result: buckets.books.map((row) => row.name).slice(0, 4).join(", ") },
+    { why: `Which movies sit next to ${seedNames}.`, detail: "filter.type=urn:entity:movie", result: buckets.movies.map((row) => row.name).slice(0, 4).join(", ") },
+    { why: "Which tags come back with the same signals, so affinities can land on the tag ids.", detail: "filter.type=urn:tag", result: tags.map((tag) => tag.name).slice(0, 6).join(", ") },
+  ];
+  for (const row of insightRows) {
+    steps.push({
+      why: `${row.why} This is the cross-domain step a plain model cannot take.`,
+      call: "GET /v2/insights",
+      detail: row.detail,
+      result: row.result || "no rows",
+    });
+  }
+
   return {
-    source: client.mode === "mock" ? "mock" : "qloo",
-    synthetic: false,
-    seeds,
-    ...buckets,
-    tags,
-    signalEntityIds: entityIds,
-    signalTagIds: tagIds,
+    graph: {
+      source: client.mode === "mock" ? "mock" : "qloo",
+      synthetic: false,
+      seeds,
+      ...buckets,
+      tags,
+      signalEntityIds: entityIds,
+      signalTagIds: tagIds,
+    },
+    steps,
   };
 }
 

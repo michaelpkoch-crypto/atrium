@@ -21,7 +21,7 @@ const display = Fraunces({
 export const metadata: Metadata = {
   title: "Atrium — taste-to-atmosphere compiler",
   description:
-    "Turn a cultural prompt into a room. Atrium uses Qloo's taste graph to choose the light, the music, the drink, and the objects.",
+    "A cultural prompt becomes a room. Atrium queries Qloo's taste graph for the lamps, the sound, and the objects, and shows the plain reading beside it.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

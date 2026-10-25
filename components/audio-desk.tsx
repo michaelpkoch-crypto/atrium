@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AudioLines, VolumeX } from "lucide-react";
 
 import type { Atmosphere } from "@/lib/atmosphere/schema";
+import type { TextureKind } from "@/lib/atmosphere/families";
 import { Button } from "@/components/ui/button";
 
 type Texture = Atmosphere["audio"];
@@ -14,6 +15,7 @@ class RoomTone {
   private analyser: AnalyserNode | null = null;
   private nodes: AudioNode[] = [];
   private oscillators: OscillatorNode[] = [];
+  private timers: number[] = [];
 
   async start(texture: Texture) {
     const context = this.context ?? new AudioContext();
@@ -22,54 +24,53 @@ class RoomTone {
     this.teardownGraph();
 
     const master = context.createGain();
-    master.gain.value = 0.9;
+    master.gain.value = 0.85;
+    const compressor = context.createDynamicsCompressor();
+    compressor.threshold.value = -18;
+    compressor.knee.value = 12;
+    compressor.ratio.value = 2.5;
     const analyser = context.createAnalyser();
     analyser.fftSize = 64;
-    master.connect(analyser);
+    master.connect(compressor);
+    compressor.connect(analyser);
     analyser.connect(context.destination);
     this.master = master;
     this.analyser = analyser;
+    this.nodes.push(compressor);
 
-    const lfo = context.createOscillator();
-    const lfoGain = context.createGain();
-    lfo.frequency.value = texture.tempoBpm / 60;
-    lfoGain.gain.value = 0.07;
-    lfo.connect(lfoGain);
-    lfoGain.connect(master.gain);
-    lfo.start();
-    this.oscillators.push(lfo);
+    const padBus = context.createGain();
+    padBus.gain.value = 0.9;
+    const padFilter = context.createBiquadFilter();
+    padFilter.type = "lowpass";
+    padFilter.frequency.value = 900;
+    const sweep = context.createOscillator();
+    const sweepGain = context.createGain();
+    sweep.frequency.value = 0.05;
+    sweepGain.gain.value = 280;
+    sweep.connect(sweepGain);
+    sweepGain.connect(padFilter.frequency);
+    sweep.start();
+    padBus.connect(padFilter);
+    padFilter.connect(master);
+    this.oscillators.push(sweep);
+    this.nodes.push(padBus, padFilter, sweepGain);
 
     texture.frequencies.slice(0, 5).forEach((frequency, index) => {
       const osc = context.createOscillator();
       const gain = context.createGain();
-      osc.type = "sine";
+      osc.type = index === 0 ? "sine" : "triangle";
       osc.frequency.value = frequency;
-      osc.detune.value = index % 2 === 0 ? -6 : 7;
-      gain.gain.value = index === 0 ? 0.22 : 0.07;
+      osc.detune.value = index % 2 === 0 ? -7 : 8;
+      gain.gain.value = index === 0 ? 0.16 : 0.045;
       osc.connect(gain);
-      gain.connect(master);
+      gain.connect(padBus);
       osc.start();
       this.oscillators.push(osc);
       this.nodes.push(gain);
     });
 
-    const noiseBuffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
-    const data = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
-    const noise = context.createBufferSource();
-    noise.buffer = noiseBuffer;
-    noise.loop = true;
-    const filter = context.createBiquadFilter();
-    filter.type = "bandpass";
-    filter.frequency.value = texture.filterHz;
-    filter.Q.value = 0.7;
-    const noiseGain = context.createGain();
-    noiseGain.gain.value = texture.noise * 0.18;
-    noise.connect(filter);
-    filter.connect(noiseGain);
-    noiseGain.connect(master);
-    noise.start();
-    this.nodes.push(noise, filter, noiseGain);
+    this.textureLayer(context, master, texture.texture, texture.noise, texture.filterHz);
+    this.pulse(context, master, texture.tempoBpm);
   }
 
   stop() {
@@ -84,7 +85,94 @@ class RoomTone {
     return Array.from(bins.slice(0, 12), (value) => value / 255);
   }
 
+  private textureLayer(context: AudioContext, master: GainNode, kind: TextureKind, amount: number, filterHz: number) {
+    const noise = loopNoise(context);
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    if (kind === "rain") {
+      filter.type = "highpass";
+      filter.frequency.value = Math.max(1400, filterHz);
+      gain.gain.value = 0.05 + amount * 0.12;
+      const drops = context.createBufferSource();
+      drops.buffer = spikes(context, 50);
+      drops.loop = true;
+      drops.connect(gain.gain);
+      drops.start();
+      this.nodes.push(drops);
+    } else if (kind === "vinyl") {
+      filter.type = "bandpass";
+      filter.frequency.value = 2200;
+      filter.Q.value = 0.4;
+      gain.gain.value = 0.03 + amount * 0.08;
+      const clicks = context.createBufferSource();
+      clicks.buffer = spikes(context, 14);
+      clicks.loop = true;
+      const clickGain = context.createGain();
+      clickGain.gain.value = 0.04;
+      clicks.connect(clickGain);
+      clickGain.connect(master);
+      clicks.start();
+      this.nodes.push(clicks, clickGain);
+    } else if (kind === "crowd") {
+      filter.type = "bandpass";
+      filter.frequency.value = 520;
+      filter.Q.value = 0.7;
+      gain.gain.value = 0.04 + amount * 0.1;
+      this.wobble(context, gain.gain, 0.18, 0.03);
+    } else if (kind === "water" || kind === "steam") {
+      filter.type = "lowpass";
+      filter.frequency.value = kind === "steam" ? 1400 : 780;
+      gain.gain.value = 0.04 + amount * 0.1;
+      this.wobble(context, gain.gain, kind === "steam" ? 0.12 : 0.08, 0.025);
+    } else {
+      filter.type = "lowpass";
+      filter.frequency.value = 640;
+      gain.gain.value = 0.015 + amount * 0.04;
+    }
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(master);
+    noise.start();
+    this.nodes.push(noise, filter, gain);
+  }
+
+  private wobble(context: AudioContext, param: AudioParam, rate: number, depth: number) {
+    const lfo = context.createOscillator();
+    const gain = context.createGain();
+    lfo.frequency.value = rate;
+    gain.gain.value = depth;
+    lfo.connect(gain);
+    gain.connect(param);
+    lfo.start();
+    this.oscillators.push(lfo);
+    this.nodes.push(gain);
+  }
+
+  private pulse(context: AudioContext, master: GainNode, bpm: number) {
+    const osc = context.createOscillator();
+    const gain = context.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 78;
+    gain.gain.value = 0;
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start();
+    this.oscillators.push(osc);
+    this.nodes.push(gain);
+    const interval = Math.max(280, 60000 / bpm);
+    const timer = window.setInterval(() => {
+      const now = context.currentTime;
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.07, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+    }, interval);
+    this.timers.push(timer);
+  }
+
   private teardownGraph() {
+    for (const timer of this.timers) window.clearInterval(timer);
+    this.timers = [];
     for (const osc of this.oscillators) {
       try {
         osc.stop();
@@ -103,12 +191,36 @@ class RoomTone {
   }
 }
 
+function loopNoise(context: AudioContext) {
+  const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+  const source = context.createBufferSource();
+  source.buffer = buffer;
+  source.loop = true;
+  return source;
+}
+
+function spikes(context: AudioContext, count: number) {
+  const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < count; i += 1) {
+    const at = Math.floor(Math.random() * (data.length - 8));
+    data[at] = 1;
+    data[at + 1] = 0.45;
+    data[at + 2] = 0.15;
+  }
+  return buffer;
+}
+
 export function AudioDesk({
   texture,
-  ink,
+  inspiredBy,
+  empty,
 }: {
   texture: Texture | null;
-  ink: string;
+  inspiredBy: string[];
+  empty?: string;
 }) {
   const engine = useRef<RoomTone | null>(null);
   const [on, setOn] = useState(false);
@@ -135,32 +247,40 @@ export function AudioDesk({
     };
   }, [on, texture]);
 
+  const names = inspiredBy.filter(Boolean).slice(0, 3);
+
   return (
-    <div className="flex items-center gap-3">
-      <Button
-        type="button"
-        variant="outline"
-        disabled={!texture}
-        aria-pressed={on}
-        onClick={() => setOn((value) => !value)}
-        className="h-10 border-white/20 bg-black/40 text-[color:var(--room-ink)] hover:bg-white/10"
-      >
-        {on ? <VolumeX /> : <AudioLines />}
-        {on ? "Silence" : "Sound the room"}
-      </Button>
-      <div className="flex h-8 items-end gap-1" aria-hidden>
-        {bars.map((bar, index) => (
-          <span
-            key={index}
-            className="w-1 rounded-full"
-            style={{
-              height: `${Math.max(4, bar * 32)}px`,
-              background: ink,
-              opacity: on ? 0.85 : 0.25,
-            }}
-          />
-        ))}
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={!texture}
+          aria-pressed={on}
+          onClick={() => setOn((value) => !value)}
+          className="h-10 border-white/20 bg-black/40 text-white hover:bg-white/10"
+        >
+          {on ? <VolumeX /> : <AudioLines />}
+          {on ? "Silence" : "Play the room"}
+        </Button>
+        <div className="flex h-8 items-end gap-1" aria-hidden>
+          {bars.map((bar, index) => (
+            <span
+              key={index}
+              className="w-1 rounded-full bg-white"
+              style={{ height: `${Math.max(4, bar * 32)}px`, opacity: on ? 0.85 : 0.25 }}
+            />
+          ))}
+        </div>
       </div>
+      {texture ? (
+        <p className="text-xs leading-5 text-white/70">
+          {texture.description}
+          {names.length ? ` Inspired by ${names.join(", ")}.` : ""}
+        </p>
+      ) : (
+        <p className="text-xs text-white/55">{empty ?? "The bed starts after a room is compiled. It is synthesized, not a recording."}</p>
+      )}
     </div>
   );
 }

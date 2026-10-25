@@ -117,7 +117,7 @@ export function tagQueriesFor(prompt: string, seedNames: string[]): string[] {
   const aesthetic = AESTHETIC_TOKENS.filter((word) => promptTokens.includes(word));
   const extra = promptTokens.filter(
     (token) =>
-      token.length >= 5 &&
+      token.length >= 4 &&
       !STOP.has(token) &&
       !seedTokens.has(token) &&
       !/^\d+$/.test(token) &&
