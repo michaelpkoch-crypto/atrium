@@ -192,9 +192,9 @@ export function AtriumApp() {
       </header>
 
       <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
-        <main className="space-y-4 px-4 pb-16 sm:px-6">
+        <main className="min-w-0 space-y-4 px-4 pb-16 sm:px-6">
           <div
-            className={result ? "grid gap-3 xl:grid-cols-2" : undefined}
+            className={result ? "grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2" : undefined}
             onTouchStart={(event) => {
               touchX.current = event.changedTouches[0]?.clientX ?? null;
             }}
@@ -207,7 +207,7 @@ export function AtriumApp() {
           >
             {atmosphere && plain ? (
               <>
-                <div className={view === "plain" ? "hidden xl:block" : undefined}>
+                <div className={view === "plain" ? "hidden min-w-0 lg:block" : "min-w-0"}>
                   <p className="mb-1 font-mono text-[10px] tracking-[0.16em] text-emerald-100/80 uppercase">Atrium · Qloo</p>
                   <RoomFrame
                     key={`qloo-${atmosphere.title}`}
@@ -217,7 +217,7 @@ export function AtriumApp() {
                     label={atmosphere.title}
                   />
                 </div>
-                <div className={view === "qloo" ? "hidden xl:block" : undefined}>
+                <div className={view === "qloo" ? "hidden min-w-0 lg:block" : "min-w-0"}>
                   <p className="mb-1 font-mono text-[10px] tracking-[0.16em] text-white/50 uppercase">Plain reading</p>
                   <RoomFrame
                     key={`plain-${plain.title}`}
@@ -264,7 +264,7 @@ export function AtriumApp() {
 
           {result ? (
             <>
-              <div className="flex gap-2 xl:hidden" role="tablist" aria-label="Room source">
+              <div className="flex gap-2 lg:hidden" role="tablist" aria-label="Room source">
                 <Button type="button" variant={view === "qloo" ? "default" : "outline"} className="h-10 flex-1" onClick={() => setView("qloo")}>
                   Atrium
                 </Button>
@@ -272,7 +272,7 @@ export function AtriumApp() {
                   Plain LLM
                 </Button>
               </div>
-              <p className="text-[11px] text-white/45 xl:hidden">Swipe the room to switch. On a wide screen both rooms stay side by side.</p>
+              <p className="text-[11px] text-white/45 lg:hidden">Swipe the room to switch. On a wide screen both rooms stay side by side.</p>
               <Comparison result={result} view={view} onView={setView} />
             </>
           ) : null}
@@ -329,7 +329,7 @@ function Comparison({
       <div>
         <div className="flex items-center justify-between gap-2">
           <h2 className="font-mono text-[10px] tracking-[0.16em] text-emerald-100/80 uppercase">What Qloo added</h2>
-          <button type="button" className="text-[11px] text-white/60 underline-offset-2 hover:underline xl:hidden" onClick={() => onView(view === "qloo" ? "plain" : "qloo")}>
+          <button type="button" className="text-[11px] text-white/60 underline-offset-2 hover:underline lg:hidden" onClick={() => onView(view === "qloo" ? "plain" : "qloo")}>
             {view === "qloo" ? "See plain room" : "See Atrium"}
           </button>
         </div>

@@ -75,7 +75,7 @@ export function RoomFrame({
         : null;
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex w-full min-w-0 flex-col gap-2">
       <figure
         className="relative overflow-hidden rounded-xl border border-white/10"
         style={{ background: day ? tint(palette.ambient, 0.04) : shade(palette.ambient, 0.2), ["--room-pulse" as string]: `${Math.max(0.55, 60 / tempoBpm)}s` }}
@@ -102,7 +102,7 @@ export function RoomFrame({
         ) : null}
       </figure>
       {interactive ? (
-        <div className="flex gap-1.5 overflow-x-auto pb-1" aria-label="Room fixtures">
+        <div className="flex w-full min-w-0 gap-1.5 overflow-x-auto pb-1" aria-label="Room fixtures">
           <ChipButton
             pressed={selected === "display"}
             onClick={() => setSelected((current) => (current === "display" ? null : "display"))}
@@ -183,7 +183,7 @@ function RoomSvg({
   const wood = day ? "#6a5346" : "#3a2a22";
 
   return (
-    <svg viewBox="0 0 1200 760" className="aspect-[5/4] w-full sm:aspect-[16/10]" role="img" aria-label={label} onClick={onClear}>
+    <svg viewBox="0 0 1200 760" className="aspect-[5/4] w-full max-w-full sm:aspect-[16/10]" role="img" aria-label={label} onClick={onClear}>
       <defs>
         <linearGradient id={`${uid}-wall`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor={wallTop} />
