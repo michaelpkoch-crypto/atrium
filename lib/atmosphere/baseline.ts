@@ -445,13 +445,17 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
 
   for (const artist of atmosphere.music) {
     if (artist.gap) continue;
-    const score = artist.affinity == null ? "no affinity score" : `affinity ${artist.affinity.toFixed(2)}`;
-    push(artist.name, `Artist from /v2/insights · ${score}`);
+    push(
+      artist.name,
+      artist.affinity == null ? "Artist from /v2/insights" : `Artist from /v2/insights · affinity ${artist.affinity.toFixed(2)}`,
+    );
   }
   for (const drink of atmosphere.drinks) {
     if (drink.gap) continue;
-    const score = drink.affinity == null ? "no affinity score" : `affinity ${drink.affinity.toFixed(2)}`;
-    push(drink.venue, `Place from /v2/insights · ${score}`);
+    push(
+      drink.venue,
+      drink.affinity == null ? "Place from /v2/insights" : `Place from /v2/insights · affinity ${drink.affinity.toFixed(2)}`,
+    );
   }
   for (const book of atmosphere.reading) push(book.name, "Book affinity");
   for (const movie of atmosphere.pictures) push(movie.name, "Movie affinity");

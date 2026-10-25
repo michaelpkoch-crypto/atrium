@@ -16,7 +16,7 @@ export function typeLabel(type: string): string {
 }
 
 export function affinityText(value: number | null | undefined): string {
-  if (value == null) return "unscored";
+  if (value == null) return "";
   return value.toFixed(2);
 }
 

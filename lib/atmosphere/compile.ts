@@ -131,11 +131,16 @@ export function affinityWhy(entity: TasteEntity, seeds: TasteEntity[]): string {
     });
     return `Qloo explainability credits ${parts.join(", ")}.`;
   }
-  const affinity = entity.affinity == null ? "unscored" : clamp01(entity.affinity).toFixed(2);
   const from = seeds
     .map((seed) => seed.name)
     .slice(0, 3)
     .join(", ");
+  const affinity = entity.affinity == null ? null : clamp01(entity.affinity).toFixed(2);
+  if (affinity == null) {
+    return from
+      ? `Cross-domain row from ${from} via signal.interests.entities.`
+      : `From the tag signals passed to /v2/insights.`;
+  }
   return from
     ? `Cross-domain affinity ${affinity} from ${from} via signal.interests.entities.`
     : `Affinity ${affinity} from the tag signals passed to /v2/insights.`;
@@ -206,14 +211,14 @@ function dominantFamily(signals: Signal[]): Family | null {
 }
 
 function signalDetail(signal: Signal, fixture: string): string {
-  const score = signal.affinity == null ? "no affinity score on this row" : `affinity ${signal.affinity.toFixed(2)}`;
+  const score = signal.affinity == null ? "" : ` (affinity ${signal.affinity.toFixed(2)})`;
   if (signal.tag && signal.family) {
-    return `Qloo tag “${signal.tag}” on ${signal.entity.name} (${score}) colors this ${fixture}.`;
+    return `Qloo tag “${signal.tag}” on ${signal.entity.name}${score} colors this ${fixture}.`;
   }
   if (signal.tag) {
-    return `Qloo tag “${signal.tag}” on ${signal.entity.name} (${score}) had no color prior, so this ${fixture} takes its hue from the tag id.`;
+    return `Qloo tag “${signal.tag}” on ${signal.entity.name}${score} had no color prior, so this ${fixture} takes its hue from the tag id.`;
   }
-  return `${signal.entity.name} (${score}) had no aesthetic tag, so this ${fixture} takes its hue from the entity id.`;
+  return `${signal.entity.name}${score} had no aesthetic tag, so this ${fixture} takes its hue from the entity id.`;
 }
 
 function placeKind(entity: TasteEntity, fallback: ObjectKind): ObjectKind {
@@ -551,8 +556,8 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
   if (!drinks.length) {
     const because = "Qloo returned no place, so the counter stays empty.";
     drinks.push({
-      name: "No drink",
-      venue: "No venue returned",
+      name: "Counter unset",
+      venue: "Place search returned nothing",
       venueId: anchor.id,
       affinity: null,
       because,

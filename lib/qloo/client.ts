@@ -46,7 +46,7 @@ export class QlooClient implements TasteClient {
     },
   ) {}
 
-  async search(query: string, take = 8): Promise<TasteEntity[]> {
+  async search(query: string, take = 8, types?: string): Promise<TasteEntity[]> {
     const safeQuery = sanitizeSearchQuery(query);
     const safeTake = String(Math.min(Math.max(take, 1), 20));
     if (safeQuery.length < 2) return [];
@@ -57,13 +57,17 @@ export class QlooClient implements TasteClient {
         .filter((row): row is TasteEntity => row !== null)
         .slice(0, take);
 
+    const requested = types?.split(",").filter(Boolean).slice(0, 8).join(",");
+    const first: Record<string, string> = { query: safeQuery, take: safeTake };
+    if (requested) first.types = requested;
+
     // A 400 sometimes means the untyped search is not accepted. An empty 200 or a 404 is a real miss
-    // and must not spend a second call.
+    // and must not spend a second call. A caller who already asked for types does not get a second try.
     try {
-      const body = await this.get("/search", { query: safeQuery, take: safeTake });
+      const body = await this.get("/search", first);
       return mapRows(body);
     } catch (error) {
-      if (!(error instanceof QlooError) || error.status !== 400) throw error;
+      if (requested || !(error instanceof QlooError) || error.status !== 400) throw error;
     }
 
     const typed = await this.get("/search", { query: safeQuery, take: safeTake, types: SEARCH_TYPES });
@@ -73,10 +77,11 @@ export class QlooClient implements TasteClient {
   async searchTags(query: string, take = 5): Promise<TasteTag[]> {
     const safeQuery = sanitizeSearchQuery(query, 40);
     if (safeQuery.length < 2) return [];
+    // Typo tolerance turns bathhouse into Bach House and dusk into Desk. Exact match, then we filter.
     const body = await this.get("/v2/tags", {
       "filter.query": safeQuery,
       take: String(Math.min(Math.max(take, 1), 20)),
-      "feature.typo_tolerance": "true",
+      "feature.typo_tolerance": "false",
     });
     return unwrapTags(body)
       .map((row) => normalizeTag(row))
@@ -131,17 +136,30 @@ export class QlooClient implements TasteClient {
           Accept: "application/json",
           "X-Api-Key": this.options.apiKey,
         },
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(8_000),
         cache: "no-store",
       });
     } catch (error) {
       const message = redactSecrets(error instanceof Error ? error.message : "Network error", [this.options.apiKey]);
       this.trace.push({ method: "GET", path, query, status: 0, resultCount: 0, mocked: false, error: message });
+      if (attempt < 1) {
+        await wait(350);
+        return this.get(path, query, attempt + 1);
+      }
       throw new QlooError(message, 0, path);
     }
 
-    if (response.status === 429 && attempt < 1) {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+    if ((response.status === 429 || response.status >= 500) && attempt < 1) {
+      this.trace.push({
+        method: "GET",
+        path,
+        query,
+        status: response.status,
+        resultCount: 0,
+        mocked: false,
+        error: `Retrying after HTTP ${response.status}.`,
+      });
+      await wait(response.status === 429 ? 700 : 350);
       return this.get(path, query, attempt + 1);
     }
 
@@ -183,4 +201,8 @@ export class QlooClient implements TasteClient {
     this.trace.push({ method: "GET", path, query, status: response.status, resultCount: count, mocked: false });
     return body;
   }
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

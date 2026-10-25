@@ -111,6 +111,42 @@ export function extractQueries(prompt: string): string[] {
   return (specific.length ? specific : queries).slice(0, 5);
 }
 
+/**
+ * A tag search hit is kept only when it is the word we asked for.
+ * Phonetic neighbors (bathhouse → Bach House, dusk → Desk) are rejected.
+ */
+export function tagAccepts(query: string, name: string): boolean {
+  const q = query.toLowerCase().trim();
+  const n = name.toLowerCase().trim();
+  if (!q || !n) return false;
+  if (n === q) return true;
+  const qt = tokens(q);
+  const nt = tokens(n);
+  if (qt.length > 1 && qt.every((token) => nt.includes(token))) return true;
+  if (qt.length === 1 && nt.includes(qt[0])) return true;
+  const shorter = Math.min(q.length, n.length);
+  const longer = Math.max(q.length, n.length);
+  if (shorter >= 4 && (n.includes(q) || q.includes(n)) && shorter / longer >= 0.8) return true;
+  return false;
+}
+
+const PLACE_PHRASES = ["jazz bar", "bathhouse", "kissaten", "coffee shop", "brunch", "cafe", "bar"];
+
+/** Place-shaped phrases worth a typed place search when insights return no venue. */
+export function placeQueries(prompt: string): string[] {
+  const text = prompt.toLowerCase();
+  const phrases = PLACE_PHRASES.filter(
+    (phrase) => text.includes(phrase) && !PLACE_PHRASES.some((other) => other.length > phrase.length && other.includes(phrase) && text.includes(other)),
+  );
+  const fromClauses = extractQueries(prompt).filter((query) => /bar|cafe|bath|club|diner|restaurant|room/i.test(query));
+  const unique: string[] = [];
+  for (const query of [...phrases, ...fromClauses]) {
+    const key = query.toLowerCase();
+    if (!unique.some((item) => item.toLowerCase() === key)) unique.push(query);
+  }
+  return unique.slice(0, 3);
+}
+
 export function tagQueriesFor(prompt: string, seedNames: string[]): string[] {
   const promptTokens = tokens(prompt);
   const seedTokens = new Set(seedNames.flatMap((name) => tokens(name)));

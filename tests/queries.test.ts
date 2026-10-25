@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractQueries, tagQueriesFor } from "@/lib/agent/queries";
+import { extractQueries, placeQueries, tagQueriesFor } from "@/lib/agent/queries";
 
 describe("prompt queries", () => {
   it("splits a meets-prompt into the two cultural halves", () => {
@@ -15,5 +15,11 @@ describe("prompt queries", () => {
     expect(tagQueriesFor("reading Murakami on a rainy night", ["Haruki Murakami"])).toEqual(
       expect.arrayContaining(["rainy", "night"]),
     );
+  });
+
+  it("asks for the place phrase and not the shorter word inside it", () => {
+    expect(placeQueries("Blade Runner meets a 1970s jazz bar")).toContain("jazz bar");
+    expect(placeQueries("Blade Runner meets a 1970s jazz bar")).not.toContain("bar");
+    expect(placeQueries("Studio Ghibli bathhouse at dusk")).toContain("bathhouse");
   });
 });

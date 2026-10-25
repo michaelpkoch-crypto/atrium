@@ -211,6 +211,14 @@
   animation: atrium-rain 1.1s linear infinite;
 }
 
+.room-mote {
+  animation: atrium-mote 9s ease-in-out infinite;
+}
+
+.room-parallax {
+  animation: atrium-parallax 18s ease-in-out infinite;
+}
+
 @keyframes atrium-pulse {
   0%,
   100% {
@@ -259,6 +267,28 @@
   }
 }
 
+@keyframes atrium-mote {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.2;
+  }
+  50% {
+    transform: translateY(-18px);
+    opacity: 0.7;
+  }
+}
+
+@keyframes atrium-parallax {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-10px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .room-fx-rain,
   .room-fx-neon-grid,
@@ -266,7 +296,9 @@
   .room-flicker,
   .room-drift,
   .room-steam,
-  .room-rain {
+  .room-rain,
+  .room-mote,
+  .room-parallax {
     animation: none;
   }
 }

@@ -103,34 +103,34 @@ export function RoomFrame({
       </figure>
       {interactive ? (
         <div className="flex w-full min-w-0 gap-1.5 overflow-x-auto pb-1" aria-label="Room fixtures">
-          <ChipButton
-            pressed={selected === "display"}
-            onClick={() => setSelected((current) => (current === "display" ? null : "display"))}
-            swatch={palette.accent}
-            text={scene.display.title}
-          />
-          {scene.lights.map((light) => (
+          {fixtureChips(scene, palette).map((chip) => (
             <ChipButton
-              key={light.id}
-              pressed={selected === light.id}
-              onClick={() => setSelected((current) => (current === light.id ? null : light.id))}
-              swatch={light.color}
-              text={light.label}
-            />
-          ))}
-          {scene.objects.map((object) => (
-            <ChipButton
-              key={object.id}
-              pressed={selected === object.id}
-              onClick={() => setSelected((current) => (current === object.id ? null : object.id))}
-              swatch={palette.secondary}
-              text={object.label}
+              key={chip.id}
+              pressed={selected === chip.id}
+              onClick={() => setSelected((current) => (current === chip.id ? null : chip.id))}
+              swatch={chip.swatch}
+              text={chip.text}
             />
           ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+function fixtureChips(scene: RoomScene, palette: Palette): { id: string; text: string; swatch: string }[] {
+  const chips: { id: string; text: string; swatch: string }[] = [];
+  const seen = new Set<string>();
+  const push = (id: string, text: string, swatch: string) => {
+    const key = text.trim().toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    chips.push({ id, text, swatch });
+  };
+  push("display", scene.display.title, palette.accent);
+  for (const light of scene.lights) push(light.id, light.label, light.color);
+  for (const object of scene.objects) push(object.id, object.label, palette.secondary);
+  return chips;
 }
 
 function ChipButton({
@@ -197,18 +197,41 @@ function RoomSvg({
           <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch" />
           <feColorMatrix type="saturate" values="0" />
         </filter>
+        <filter id={`${uid}-bloom`} x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="12" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <linearGradient id={`${uid}-ceiling`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#000" stopOpacity={day ? 0.12 : 0.42} />
+          <stop offset="1" stopColor="#000" stopOpacity="0" />
+        </linearGradient>
+        <radialGradient id={`${uid}-vignette`} cx="50%" cy="42%" r="68%">
+          <stop offset="0.55" stopColor="#000" stopOpacity="0" />
+          <stop offset="1" stopColor="#000" stopOpacity={day ? 0.22 : 0.48} />
+        </radialGradient>
         <clipPath id={`${uid}-win`}>
           <rect x={scene.windowBox.x} y={scene.windowBox.y} width={scene.windowBox.w} height={scene.windowBox.h} rx="2" />
         </clipPath>
         {scene.lights.map((light) => (
           <radialGradient key={light.id} id={`${uid}-${light.id}`} cx="50%" cy="50%" r="50%">
-            <stop offset="0" stopColor={light.color} stopOpacity={0.2 + light.intensity * 0.65} />
+            <stop offset="0" stopColor={light.color} stopOpacity={0.28 + light.intensity * 0.6} />
+            <stop offset="0.45" stopColor={light.color} stopOpacity={0.12 + light.intensity * 0.2} />
             <stop offset="1" stopColor={light.color} stopOpacity="0" />
           </radialGradient>
+        ))}
+        {scene.lights.map((light) => (
+          <linearGradient key={`cone-${light.id}`} id={`${uid}-cone-${light.id}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={light.color} stopOpacity={0.55 + light.intensity * 0.3} />
+            <stop offset="1" stopColor={light.color} stopOpacity="0" />
+          </linearGradient>
         ))}
       </defs>
 
       <rect width="1200" height="500" fill={`url(#${uid}-wall)`} />
+      <rect width="1200" height="180" fill={`url(#${uid}-ceiling)`} />
       <rect width="1200" height="500" filter={`url(#${uid}-grain)`} opacity={day ? 0.05 : 0.12} />
       <rect width="1200" height="26" fill="#000" opacity={day ? 0.08 : 0.38} />
       <polygon points="0,500 1200,500 1200,760 0,760" fill={`url(#${uid}-floor)`} />
@@ -225,21 +248,26 @@ function RoomSvg({
       ) : null}
 
       {scene.lights.map((light) => (
+        <LightCone key={`cone-${light.id}`} uid={uid} light={light} />
+      ))}
+      {scene.lights.map((light) => (
         <Glow key={`glow-${light.id}`} uid={uid} light={light} />
       ))}
+      <FloorSheen lights={scene.lights} />
 
-      {scene.plan === "bath" ? <Steam x={380} y={520} /> : null}
       {scene.objects.map((object) => (
         <Piece key={object.id} object={object} palette={palette} day={day} selected={selected === object.id} interactive={interactive} onSelect={onSelect} />
       ))}
       {scene.lights.map((light) => (
         <Fixture key={light.id} light={light} selected={selected === light.id} interactive={interactive} onSelect={onSelect} />
       ))}
+      <AtmosphereBits scene={scene} />
 
       <rect y="488" width="1200" height="14" fill="#000" opacity={day ? 0.12 : 0.45} />
       <text x="28" y="478" fill={day ? "#3a312c" : "#f4efe6"} opacity="0.7" fontSize="18" fontFamily="ui-monospace, monospace">
         {scene.timeLabel}
       </text>
+      <rect width="1200" height="760" fill={`url(#${uid}-vignette)`} pointerEvents="none" />
     </svg>
   );
 }
@@ -292,8 +320,96 @@ function Glow({ uid, light }: { uid: string; light: RoomLight }) {
       rx={rx}
       ry={ry}
       fill={`url(#${uid}-${light.id})`}
+      filter={`url(#${uid}-bloom)`}
       className={light.flicker > 0.5 ? "room-flicker" : "room-pulse"}
     />
+  );
+}
+
+function LightCone({ uid, light }: { uid: string; light: RoomLight }) {
+  if (light.kind === "string" || light.kind === "led-strip") return null;
+  const spread = 64 + light.intensity * 110;
+  const floorY = 620;
+  return (
+    <polygon
+      points={`${light.x},${light.y + 8} ${light.x - spread},${floorY} ${light.x + spread},${floorY}`}
+      fill={`url(#${uid}-cone-${light.id})`}
+      className={light.flicker > 0.5 ? "room-flicker" : "room-pulse"}
+      pointerEvents="none"
+    />
+  );
+}
+
+function FloorSheen({ lights }: { lights: RoomLight[] }) {
+  return (
+    <g pointerEvents="none">
+      <ellipse cx="600" cy="690" rx="480" ry="26" fill="#fff" opacity="0.05" />
+      {lights.map((light) => {
+        const x = light.x2 != null ? (light.x + light.x2) / 2 : light.x;
+        const wide = light.kind === "string" || light.kind === "led-strip";
+        return (
+          <ellipse
+            key={light.id}
+            cx={x}
+            cy={628}
+            rx={wide ? 120 : 34 + light.intensity * 28}
+            ry={wide ? 10 : 7}
+            fill={light.color}
+            opacity={0.28 + light.intensity * 0.22}
+          />
+        );
+      })}
+    </g>
+  );
+}
+
+function AtmosphereBits({ scene }: { scene: RoomScene }) {
+  const rain = scene.window === "rain" || scene.window === "neon-city" || scene.plan === "neon";
+  const steam = scene.plan === "bath" || scene.window === "dusk";
+  return (
+    <g pointerEvents="none">
+      {rain ? <RainRoom /> : <Dust />}
+      {steam ? <Steam x={scene.plan === "bath" ? 380 : 520} y={500} /> : null}
+    </g>
+  );
+}
+
+function Dust() {
+  return (
+    <g>
+      {Array.from({ length: 16 }, (_, index) => (
+        <circle
+          key={index}
+          className="room-mote"
+          cx={70 + ((index * 83) % 1060)}
+          cy={90 + ((index * 47) % 380)}
+          r={index % 4 === 0 ? 3.4 : 1.8}
+          fill="#f6f1e8"
+          opacity="0.8"
+          style={{ animationDelay: `${(index % 8) * 0.45}s` }}
+        />
+      ))}
+    </g>
+  );
+}
+
+function RainRoom() {
+  return (
+    <g opacity="0.4">
+      {Array.from({ length: 24 }, (_, index) => (
+        <line
+          key={index}
+          className="room-rain"
+          x1={30 + index * 50}
+          y1={24 + (index % 5) * 16}
+          x2={16 + index * 50}
+          y2={78 + (index % 5) * 16}
+          stroke="#d7e6f4"
+          strokeWidth="1.4"
+          style={{ animationDelay: `${(index % 6) * 0.15}s` }}
+        />
+      ))}
+    </g>
   );
 }
 
@@ -328,8 +444,10 @@ function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windo
         <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#e7a15a" />
         <rect x={box.x} y={box.y + box.h * 0.45} width={box.w} height={box.h * 0.55} fill="#c46b5a" />
         <circle cx={box.x + box.w * 0.72} cy={box.y + box.h * 0.62} r={Math.min(36, box.h * 0.18)} fill="#f6d7a2" />
-        <path d={`M${box.x} ${box.y + box.h} L${box.x + box.w * 0.2} ${box.y + box.h * 0.62} L${box.x + box.w * 0.45} ${box.y + box.h} Z`} fill="#5d6a52" />
-        <path d={`M${box.x + box.w * 0.35} ${box.y + box.h} L${box.x + box.w * 0.62} ${box.y + box.h * 0.5} L${box.x + box.w} ${box.y + box.h} Z`} fill="#3e4a3c" />
+        <g className="room-parallax">
+          <path d={`M${box.x} ${box.y + box.h} L${box.x + box.w * 0.2} ${box.y + box.h * 0.62} L${box.x + box.w * 0.45} ${box.y + box.h} Z`} fill="#5d6a52" />
+          <path d={`M${box.x + box.w * 0.35} ${box.y + box.h} L${box.x + box.w * 0.62} ${box.y + box.h * 0.5} L${box.x + box.w} ${box.y + box.h} Z`} fill="#3e4a3c" />
+        </g>
       </>
     );
   }
@@ -338,8 +456,10 @@ function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windo
       <>
         <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#f4d7c4" />
         <circle cx={box.x + box.w * 0.5} cy={box.y + 48} r="26" fill="#fff4d2" />
-        <rect x={box.x + box.w * 0.3} y={box.y + box.h * 0.42} width={box.w * 0.4} height={box.h * 0.58} fill="#f2b7c4" />
-        <polygon points={`${box.x + box.w * 0.3},${box.y + box.h * 0.42} ${box.x + box.w * 0.5},${box.y + box.h * 0.22} ${box.x + box.w * 0.7},${box.y + box.h * 0.42}`} fill="#f7c3a0" />
+        <g className="room-parallax">
+          <rect x={box.x + box.w * 0.3} y={box.y + box.h * 0.42} width={box.w * 0.4} height={box.h * 0.58} fill="#f2b7c4" />
+          <polygon points={`${box.x + box.w * 0.3},${box.y + box.h * 0.42} ${box.x + box.w * 0.5},${box.y + box.h * 0.22} ${box.x + box.w * 0.7},${box.y + box.h * 0.42}`} fill="#f7c3a0" />
+        </g>
       </>
     );
   }
@@ -347,9 +467,11 @@ function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windo
     return (
       <>
         <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#c5c0b6" />
-        <rect x={box.x + 18} y={box.y + box.h * 0.35} width={box.w - 36} height={box.h * 0.65} fill="#8e8a84" />
-        <rect x={box.x + 28} y={box.y + box.h * 0.48} width="14" height="18" fill="#d9d4cc" />
-        <rect x={box.x + 52} y={box.y + box.h * 0.48} width="14" height="18" fill="#d9d4cc" />
+        <g className="room-parallax">
+          <rect x={box.x + 18} y={box.y + box.h * 0.35} width={box.w - 36} height={box.h * 0.65} fill="#8e8a84" />
+          <rect x={box.x + 28} y={box.y + box.h * 0.48} width="14" height="18" fill="#d9d4cc" />
+          <rect x={box.x + 52} y={box.y + box.h * 0.48} width="14" height="18" fill="#d9d4cc" />
+        </g>
       </>
     );
   }
@@ -357,7 +479,7 @@ function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windo
     return (
       <>
         <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#243246" />
-        <rect x={box.x} y={box.y + box.h * 0.62} width={box.w} height={box.h * 0.38} fill="#1a2433" />
+        <rect className="room-parallax" x={box.x} y={box.y + box.h * 0.62} width={box.w} height={box.h * 0.38} fill="#1a2433" />
         {Array.from({ length: 14 }, (_, index) => (
           <line
             key={index}
@@ -379,9 +501,11 @@ function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windo
       <>
         <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#0d1524" />
         <rect x={box.x} y={box.y + box.h * 0.72} width={box.w} height="3" fill={accent} opacity="0.85" />
-        {Array.from({ length: 6 }, (_, index) => (
-          <rect key={index} x={box.x + 16 + index * (box.w / 7)} y={box.y + 30 + (index % 3) * 18} width={18} height={box.h * 0.62 - (index % 3) * 16} fill={index % 2 ? "#123" : "#1a2740"} stroke={accent} strokeOpacity="0.45" />
-        ))}
+        <g className="room-parallax">
+          {Array.from({ length: 6 }, (_, index) => (
+            <rect key={index} x={box.x + 16 + index * (box.w / 7)} y={box.y + 30 + (index % 3) * 18} width={18} height={box.h * 0.62 - (index % 3) * 16} fill={index % 2 ? "#123" : "#1a2740"} stroke={accent} strokeOpacity="0.45" />
+          ))}
+        </g>
       </>
     );
   }
@@ -389,9 +513,11 @@ function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windo
     <>
       <rect x={box.x} y={box.y} width={box.w} height={box.h} fill="#141a28" />
       <circle cx={box.x + box.w * 0.78} cy={box.y + 36} r="10" fill="#f4efe6" opacity="0.85" />
-      {Array.from({ length: 5 }, (_, index) => (
-        <rect key={index} x={box.x + 20 + index * (box.w / 6)} y={box.y + box.h * 0.4} width={box.w / 8} height={box.h * 0.6} fill="#0c1018" />
-      ))}
+      <g className="room-parallax">
+        {Array.from({ length: 5 }, (_, index) => (
+          <rect key={index} x={box.x + 20 + index * (box.w / 6)} y={box.y + box.h * 0.4} width={box.w / 8} height={box.h * 0.6} fill="#0c1018" />
+        ))}
+      </g>
       {Array.from({ length: 8 }, (_, index) => (
         <rect key={`w${index}`} x={box.x + 28 + (index % 5) * (box.w / 6)} y={box.y + box.h * 0.5 + Math.floor(index / 5) * 22} width="6" height="8" fill="#e7c27a" opacity="0.8" />
       ))}
@@ -563,36 +689,52 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
   if (kind === "bar") {
     return (
       <g>
-        <rect x={x - 90} y={y - 46} width="180" height="18" rx="3" fill={fill} />
-        <rect x={x - 80} y={y - 28} width="160" height="28" fill={shade(fill, 0.2)} />
-        <line x1={x - 70} y1={y + 8} x2={x + 70} y2={y + 8} stroke={accent} strokeWidth="3" />
+        <rect x={x - 96} y={y - 18} width="14" height="46" rx="2" fill={shade(fill, 0.15)} />
+        <rect x={x + 82} y={y - 18} width="14" height="46" rx="2" fill={shade(fill, 0.15)} />
+        <path d={`M${x - 98} ${y - 52} Q ${x} ${y - 36} ${x + 98} ${y - 52} L${x + 92} ${y - 28} L${x - 92} ${y - 28} Z`} fill={fill} />
+        <rect x={x - 86} y={y - 28} width="172" height="34" fill={shade(fill, 0.25)} />
+        <rect x={x - 70} y={y - 44} width="10" height="16" rx="2" fill={accent} opacity="0.85" />
+        <rect x={x - 52} y={y - 48} width="8" height="20" rx="2" fill="#d9efe8" opacity="0.7" />
+        <line x1={x - 78} y1={y + 10} x2={x + 78} y2={y + 10} stroke={accent} strokeWidth="3" />
       </g>
     );
   }
   if (kind === "sofa") {
     return (
       <g>
-        <rect x={x - 80} y={y - 48} width="160" height="42" rx="10" fill={fill} />
-        <rect x={x - 92} y={y - 64} width="22" height="48" rx="6" fill={fill} />
-        <rect x={x + 70} y={y - 64} width="22" height="48" rx="6" fill={fill} />
+        <path d={`M${x - 86} ${y - 18} Q ${x} ${y - 8} ${x + 86} ${y - 18} L${x + 78} ${y + 8} L${x - 78} ${y + 8} Z`} fill={shade(fill, 0.2)} />
+        <rect x={x - 78} y={y - 52} width="156" height="40" rx="16" fill={fill} />
+        <rect x={x - 96} y={y - 70} width="26" height="58" rx="10" fill={fill} />
+        <rect x={x + 70} y={y - 70} width="26" height="58" rx="10" fill={fill} />
+        <rect x={x - 48} y={y - 46} width="40" height="22" rx="8" fill={accent} opacity="0.55" />
+        <rect x={x + 8} y={y - 46} width="40" height="22" rx="8" fill={accent} opacity="0.35" />
       </g>
     );
   }
   if (kind === "chair" || kind === "stool") {
     return (
       <g>
-        <rect x={x - 22} y={y - 36} width="44" height="14" rx="3" fill={fill} />
-        {kind === "chair" ? <rect x={x - 22} y={y - 70} width="8" height="36" fill={fill} /> : null}
-        <line x1={x - 14} y1={y - 22} x2={x - 18} y2={y} stroke={fill} strokeWidth="3" />
-        <line x1={x + 14} y1={y - 22} x2={x + 18} y2={y} stroke={fill} strokeWidth="3" />
+        <ellipse cx={x} cy={y - 28} rx="24" ry="10" fill={fill} />
+        {kind === "chair" ? (
+          <path d={`M${x - 22} ${y - 36} Q ${x - 18} ${y - 78} ${x - 4} ${y - 74} L${x - 8} ${y - 36} Z`} fill={fill} />
+        ) : (
+          <circle cx={x} cy={y - 30} r="6" fill={accent} opacity="0.6" />
+        )}
+        <line x1={x - 16} y1={y - 20} x2={x - 22} y2={y + 4} stroke={fill} strokeWidth="3" />
+        <line x1={x + 16} y1={y - 20} x2={x + 22} y2={y + 4} stroke={fill} strokeWidth="3" />
+        <line x1={x - 10} y1={y - 18} x2={x - 8} y2={y + 2} stroke={fill} strokeWidth="3" />
+        <line x1={x + 10} y1={y - 18} x2={x + 8} y2={y + 2} stroke={fill} strokeWidth="3" />
       </g>
     );
   }
   if (kind === "tub") {
     return (
       <g>
-        <ellipse cx={x} cy={y - 16} rx="78" ry="26" fill={fill} />
-        <ellipse cx={x} cy={y - 22} rx="62" ry="16" fill={accent} opacity="0.55" />
+        <path d={`M${x - 86} ${y - 8} Q ${x} ${y + 28} ${x + 86} ${y - 8} L${x + 74} ${y - 28} Q ${x} ${y - 8} ${x - 74} ${y - 28} Z`} fill={fill} />
+        <ellipse cx={x} cy={y - 24} rx="70" ry="20" fill={shade(fill, 0.1)} />
+        <ellipse cx={x} cy={y - 28} rx="58" ry="14" fill={accent} opacity="0.55" />
+        <ellipse cx={x - 16} cy={y - 32} rx="18" ry="5" fill="#fff" opacity="0.28" />
+        <rect x={x + 48} y={y - 58} width="8" height="28" rx="3" fill="#d9d0c4" />
       </g>
     );
   }
@@ -660,10 +802,11 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
 
 function Steam({ x, y }: { x: number; y: number }) {
   return (
-    <g className="room-steam" opacity="0.45">
-      <ellipse cx={x} cy={y} rx="18" ry="8" fill="#f4efe6" />
-      <ellipse cx={x + 24} cy={y + 10} rx="14" ry="6" fill="#f4efe6" />
-      <ellipse cx={x - 16} cy={y + 6} rx="12" ry="5" fill="#f4efe6" />
+    <g className="room-steam" opacity="0.7">
+      <ellipse cx={x} cy={y} rx="22" ry="10" fill="#f4efe6" />
+      <ellipse cx={x + 28} cy={y - 16} rx="16" ry="8" fill="#f4efe6" />
+      <ellipse cx={x - 20} cy={y - 10} rx="14" ry="7" fill="#f4efe6" />
+      <ellipse cx={x + 8} cy={y - 28} rx="10" ry="6" fill="#f4efe6" />
     </g>
   );
 }

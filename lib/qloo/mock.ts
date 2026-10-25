@@ -47,19 +47,22 @@ export class MockTasteClient implements TasteClient {
   readonly mode = "mock" as const;
   readonly trace: QlooTraceCall[] = [];
 
-  async search(query: string, take = 8): Promise<TasteEntity[]> {
+  async search(query: string, take = 8, types?: string): Promise<TasteEntity[]> {
+    const allowed = types?.split(",").filter(Boolean);
     const ranked = FIXTURES.map((fixture) => {
       const score = Math.max(...fixture.aliases.map((alias) => overlap(query, alias)), overlap(query, fixture.name));
       return { fixture, score };
     })
-      .filter((row) => row.score >= 0.45)
+      .filter((row) => row.score >= 0.45 && (!allowed?.length || allowed.includes(row.fixture.type)))
       .sort((a, b) => b.score - a.score || a.fixture.id.localeCompare(b.fixture.id))
       .slice(0, take);
 
+    const queryParams: Record<string, string> = { query, take: String(take) };
+    if (types) queryParams.types = types;
     this.trace.push({
       method: "GET",
       path: "/search",
-      query: { query, take: String(take) },
+      query: queryParams,
       status: ranked.length ? 200 : 404,
       resultCount: ranked.length,
       mocked: true,
@@ -77,7 +80,7 @@ export class MockTasteClient implements TasteClient {
     this.trace.push({
       method: "GET",
       path: "/v2/tags",
-      query: { "filter.query": query, take: String(take), "feature.typo_tolerance": "true" },
+      query: { "filter.query": query, take: String(take), "feature.typo_tolerance": "false" },
       status: tags.length ? 200 : 404,
       resultCount: tags.length,
       mocked: true,

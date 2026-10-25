@@ -121,18 +121,23 @@ function RoomDossier({
       </Section>
 
       <Section title="Music affinities">
-        {atmosphere.music.map((track) => (
-          <EntityRow
-            key={`${track.entityId}-${track.name}`}
-            name={track.name}
-            type="urn:entity:artist"
-            affinity={track.affinity}
-            tags={track.tags}
-            mock={mock}
-            why={track.why}
-            muted={track.gap}
-          />
-        ))}
+        {atmosphere.music.some((track) => !track.gap) ? (
+          atmosphere.music
+            .filter((track) => !track.gap)
+            .map((track) => (
+              <EntityRow
+                key={`${track.entityId}-${track.name}`}
+                name={track.name}
+                type="urn:entity:artist"
+                affinity={track.affinity}
+                tags={track.tags}
+                mock={mock}
+                why={track.why}
+              />
+            ))
+        ) : (
+          <p className="text-xs leading-5 text-white/70">Qloo returned no artist for these signals, so the bed has no name to follow.</p>
+        )}
         <p className="text-xs text-white/60">
           Texture: {atmosphere.audio.description} Noise {atmosphere.audio.noise.toFixed(2)}, filter{" "}
           {atmosphere.audio.filterHz} Hz.
@@ -140,18 +145,26 @@ function RoomDossier({
       </Section>
 
       <Section title="Drinks, from place affinities">
-        {atmosphere.drinks.map((drink) => (
-          <div key={`${drink.venueId}-${drink.name}`} className="border border-white/10 p-3">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="font-medium">{drink.name}</p>
-              <span className="font-mono text-[10px] text-white/80">{affinityText(drink.affinity)}</span>
-            </div>
-            <p className="text-xs text-white/60">{drink.venue}</p>
-            <p className="mt-1 text-xs leading-5 text-white/75">
-              {drink.because} <Cite id={drink.citation.id} name={drink.citation.name} />
-            </p>
-          </div>
-        ))}
+        {atmosphere.drinks.some((drink) => !drink.gap) ? (
+          atmosphere.drinks
+            .filter((drink) => !drink.gap)
+            .map((drink) => (
+              <div key={`${drink.venueId}-${drink.name}`} className="border border-white/10 p-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="font-medium">{drink.name}</p>
+                  {drink.affinity != null ? (
+                    <span className="font-mono text-[10px] text-white/80">{affinityText(drink.affinity)}</span>
+                  ) : null}
+                </div>
+                <p className="text-xs text-white/60">{drink.venue}</p>
+                <p className="mt-1 text-xs leading-5 text-white/75">
+                  {drink.because} <Cite id={drink.citation.id} name={drink.citation.name} />
+                </p>
+              </div>
+            ))
+        ) : (
+          <p className="text-xs leading-5 text-white/70">Qloo returned no place, so the counter is not set.</p>
+        )}
       </Section>
 
       <Section title="Decor">
@@ -295,7 +308,7 @@ function EntityRow({
     <div className={`border border-white/10 p-3 ${muted ? "opacity-70" : ""}`}>
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-medium">{name}</p>
-        <span className="font-mono text-[10px] text-white/80">{affinityText(affinity)}</span>
+        {affinity != null ? <span className="font-mono text-[10px] text-white/80">{affinityText(affinity)}</span> : null}
       </div>
       <p className="font-mono text-[10px] text-white/75">
         {typeLabel(type)}
@@ -323,8 +336,8 @@ function Domain({
           <li key={row.id} className="flex justify-between gap-3 text-xs">
             <span>{row.name}</span>
             <span className="font-mono text-white/80">
-              {affinityText(row.affinity)}
-              {row.explainers[0] ? ` · ${row.explainers[0].name}` : ""}
+              {row.affinity != null ? affinityText(row.affinity) : ""}
+              {row.explainers[0] ? `${row.affinity != null ? " · " : ""}${row.explainers[0].name}` : ""}
             </span>
           </li>
         ))}

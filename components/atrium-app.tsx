@@ -86,6 +86,7 @@ export function AtriumApp() {
   const [prompt, setPrompt] = useState<string>(EXAMPLE_PROMPTS[0]);
   const [status, setStatus] = useState<Status | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RoomPayload | null>(null);
   const [dispatching, setDispatching] = useState(false);
@@ -111,22 +112,61 @@ export function AtriumApp() {
     setLoading(true);
     setError(null);
     setView("qloo");
+    setProgress("Starting the taste graph and the plain reading.");
+    const debug = new URLSearchParams(window.location.search).get("debug") === "1";
     try {
-      const response = await fetch("/api/compile", {
+      const response = await fetch(debug ? "/api/compile?debug=1" : "/api/compile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: nextPrompt }),
+        body: JSON.stringify({ prompt: nextPrompt, debug }),
       });
-      const body = (await response.json()) as RoomPayload & { error?: string };
-      if (!response.ok) {
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/json")) {
+        const body = (await response.json()) as { error?: string };
         setError(body.error ?? "The room could not be compiled.");
         return;
       }
-      setResult(body);
+      if (!response.body) {
+        setError("The compiler returned an empty response.");
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let received = false;
+      const take = (line: string) => {
+        if (!line.trim()) return;
+        const event = JSON.parse(line) as {
+          type?: string;
+          message?: string;
+          error?: string;
+          result?: RoomPayload;
+        };
+        if (event.type === "status" && event.message) setProgress(event.message);
+        if (event.type === "error") {
+          setError(event.error ?? "The room could not be compiled.");
+          received = true;
+        }
+        if (event.type === "result" && event.result) {
+          setResult(event.result);
+          received = true;
+        }
+      };
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) take(line);
+      }
+      if (buffer.trim()) take(buffer);
+      if (!received) setError("The compiler ended before a room came back.");
     } catch {
       setError("The compiler could not be reached.");
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   }
 
@@ -232,10 +272,11 @@ export function AtriumApp() {
               <RoomFrame scene={IDLE_SCENE} palette={IDLE_PALETTE} tempoBpm={72} interactive={false} label="Empty Atrium room" />
             )}
             {loading ? (
-              <p className="mt-2 text-xs text-white/70">
-                {status?.llm
-                  ? `${status.llm.model} is choosing the Qloo lookups. A second call, with no tools, is writing the plain room.`
-                  : "Asking Qloo, then drafting the plain reading beside it."}
+              <p className="mt-2 text-xs text-white/70" role="status">
+                {progress ??
+                  (status?.llm
+                    ? `${status.llm.model} is choosing the Qloo lookups. A second call, with no tools, is writing the plain room.`
+                    : "Asking Qloo, then drafting the plain reading beside it.")}
               </p>
             ) : null}
           </div>
@@ -363,14 +404,18 @@ function Comparison({
 }
 
 function AgentTrace({ result }: { result: RoomPayload }) {
+  const diagnostics = result.diagnostics;
   const planner =
     result.agent.kind === "llm" && result.agent.model
-      ? `${result.agent.model} chose these Qloo calls.`
-      : "Fixed order: search, then tags, then cross-domain insights.";
+      ? `${result.agent.model} ranked the Qloo candidates. Insights then ran in parallel.`
+      : diagnostics?.modelError
+        ? "The model did not rank the candidates. The room used the closest search hits."
+        : "Fixed order: search, then tags, then cross-domain insights.";
   return (
     <section className="border border-white/10 p-3">
       <h2 className="font-mono text-[10px] tracking-[0.16em] text-white/55 uppercase">How Qloo was asked</h2>
       <p className="mt-1 text-xs text-white/70">{planner}</p>
+      {diagnostics?.choice?.reason ? <p className="mt-1 text-xs text-white/75">{diagnostics.choice.reason}</p> : null}
       {result.agent.fallback ? <p className="mt-1 text-xs text-amber-100/80">{result.agent.fallback}</p> : null}
       <ol className="mt-3 space-y-2">
         {result.steps.slice(0, 8).map((step, index) => (
@@ -390,6 +435,43 @@ function AgentTrace({ result }: { result: RoomPayload }) {
               </li>
             ))}
           </ol>
+        </details>
+      ) : null}
+      {diagnostics ? (
+        <details className="mt-3 text-xs text-white/60">
+          <summary className="cursor-pointer">Debug trace</summary>
+          <div className="mt-2 space-y-2">
+            {diagnostics.rejected.length ? (
+              <ul className="space-y-1">
+                {diagnostics.rejected.slice(0, 12).map((row) => (
+                  <li key={`${row.name}-${row.why}`}>
+                    <span className="text-white/80">{row.name}.</span> {row.why}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No tag candidates were rejected.</p>
+            )}
+            <pre className="max-h-64 overflow-auto border border-white/10 p-2 text-[10px] leading-4 text-white/70">
+              {JSON.stringify(
+                {
+                  choice: diagnostics.choice,
+                  modelError: diagnostics.modelError,
+                  plainError: diagnostics.plainError,
+                  candidates: diagnostics.candidates,
+                  calls: result.trace.map((call) => ({
+                    path: call.path,
+                    query: call.query,
+                    status: call.status,
+                    resultCount: call.resultCount,
+                    error: call.error,
+                  })),
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </div>
         </details>
       ) : null}
     </section>

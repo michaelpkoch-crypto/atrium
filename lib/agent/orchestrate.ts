@@ -3,7 +3,8 @@ import { compileAtmosphere } from "@/lib/atmosphere/compile";
 import type { Atmosphere } from "@/lib/atmosphere/schema";
 import { readConfig, type AppConfig, type DispatchMode } from "@/lib/config";
 import { NoTasteMatch, PromptError } from "@/lib/agent/errors";
-import { extractQueries, nameScore, tagQueriesFor, tokens } from "@/lib/agent/queries";
+import { extractQueries, nameScore, tagAccepts, tagQueriesFor, tokens } from "@/lib/agent/queries";
+import { relevantPlaces, rescuePlaces } from "@/lib/agent/rank";
 import type { AgentStep } from "@/lib/agent/steps";
 import { hashString } from "@/lib/atmosphere/color";
 import type { QlooTraceCall, TasteClient, TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
@@ -52,6 +53,15 @@ export type CompileResult = {
   steps: AgentStep[];
   baseline: PlainRoom;
   comparison: Comparison;
+  diagnostics: CompileDiagnostics;
+};
+
+export type CompileDiagnostics = {
+  candidates: { id: string; name: string; type: string; score: number; query: string; typed: string }[];
+  rejected: { name: string; why: string }[];
+  modelError: string | null;
+  choice: { seedIds: string[]; tagIds: string[]; reason: string } | null;
+  plainError: string | null;
 };
 
 const INSIGHT_TARGETS = [
@@ -65,7 +75,13 @@ const INSIGHT_TARGETS = [
 
 export async function compileFromPrompt(
   prompt: string,
-  options?: { client?: TasteClient; env?: Record<string, string | undefined>; allowLlm?: boolean },
+  options?: {
+    client?: TasteClient;
+    env?: Record<string, string | undefined>;
+    allowLlm?: boolean;
+    debug?: boolean;
+    onStatus?: (message: string) => void;
+  },
 ): Promise<CompileResult> {
   const cleaned = prompt.replace(/[\u0000-\u001F\u007F]/g, " ").trim().replace(/\s+/g, " ");
   if (cleaned.length < 3) throw new PromptError("Give the room a cultural prompt of at least a few words.");
@@ -75,10 +91,11 @@ export async function compileFromPrompt(
   const config = readConfig(env);
   const secrets = secretValues(config);
   const client = options?.client ?? (await import("@/lib/qloo")).createTasteClient(env);
-  const baselinePromise =
-    options?.allowLlm !== false && config.llm
-      ? import("@/lib/agent/baseline-model").then((mod) => mod.modelBaseline(cleaned, config.llm!))
-      : Promise.resolve(stereotypeBaseline(cleaned));
+  const useLlm = options?.allowLlm !== false && Boolean(config.llm);
+  if (useLlm) options?.onStatus?.("Writing the plain reading beside the Qloo room.");
+  const baselinePromise = useLlm
+    ? import("@/lib/agent/baseline-model").then((mod) => mod.modelBaseline(cleaned, config.llm!))
+    : Promise.resolve(stereotypeBaseline(cleaned));
 
   let agent: CompileResult["agent"] = {
     kind: "deterministic",
@@ -86,40 +103,85 @@ export async function compileFromPrompt(
     model: null,
     fallback: null,
   };
+  let diagnostics = emptyDiagnostics();
 
   let graph: TasteGraph | null = null;
   let steps: AgentStep[] = [];
-  if (options?.allowLlm !== false && config.llm) {
+  if (useLlm && config.llm) {
     try {
       const { compileWithModel } = await import("@/lib/agent/llm");
-      const modeled = await compileWithModel({ prompt: cleaned, client, llm: config.llm });
+      const modeled = await compileWithModel({
+        prompt: cleaned,
+        client,
+        llm: config.llm,
+        onStatus: options?.onStatus,
+      });
       steps = modeled.steps;
-      if (modeled.graph) {
+      diagnostics = { ...modeled.diagnostics, plainError: null };
+      if (modeled.graph && modeled.modelUsed) {
         graph = modeled.graph;
         agent = { kind: "llm", provider: config.llm.provider, model: config.llm.modelId, fallback: null };
+      } else if (modeled.graph) {
+        graph = modeled.graph;
+        const reason = modeled.diagnostics.modelError ?? "the model returned no ranking";
+        agent = {
+          kind: "deterministic",
+          provider: config.llm.provider,
+          model: config.llm.modelId,
+          fallback: `The model did not rank the candidates (${reason}). Closest search hits were kept.`,
+        };
       }
     } catch (error) {
-      agent.fallback = redactSecrets(error instanceof Error ? error.message : "The model path failed.", secrets);
+      const message = redactSecrets(error instanceof Error ? error.message : "The model path failed.", secrets);
+      console.error("[atrium] model path failed:", message);
+      agent.fallback = message;
+      diagnostics.modelError = message;
     }
   }
 
   if (!graph) {
+    options?.onStatus?.("Searching Qloo for the names in the prompt.");
     const gathered = await gatherGraph(client, cleaned);
     graph = gathered.graph;
     steps = steps.length ? [...steps, ...gathered.steps] : gathered.steps;
-    if (config.llm && options?.allowLlm !== false) {
+    if (config.llm && useLlm) {
       agent = {
         kind: "deterministic",
         provider: config.llm.provider,
         model: config.llm.modelId,
-        fallback: agent.fallback ?? "The model did not produce a compilable taste graph.",
+        fallback: agent.fallback ?? diagnostics.modelError ?? "The model did not produce a compilable taste graph.",
       };
     }
   }
 
+  options?.onStatus?.("Compiling the room from those rows.");
   const atmosphere = compileAtmosphere(cleaned, graph);
   const baseline = await baselinePromise;
+  if (baseline.source === "stereotype" && useLlm) {
+    console.error("[atrium] plain-room fallback:", baseline.note);
+    diagnostics.plainError = baseline.note;
+  }
   const comparison = compareRooms(cleaned, atmosphere, baseline);
+  if (options?.debug) {
+    console.info(
+      "[atrium] compile debug",
+      redactSecrets(
+        JSON.stringify({
+          agent,
+          diagnostics,
+          calls: client.trace.map((call) => ({
+            path: call.path,
+            query: call.query,
+            status: call.status,
+            resultCount: call.resultCount,
+            mocked: call.mocked,
+            error: call.error,
+          })),
+        }),
+        secrets,
+      ),
+    );
+  }
   return {
     atmosphere,
     graph: {
@@ -147,7 +209,12 @@ export async function compileFromPrompt(
     steps,
     baseline,
     comparison,
+    diagnostics,
   };
+}
+
+function emptyDiagnostics(): CompileDiagnostics {
+  return { candidates: [], rejected: [], modelError: null, choice: null, plainError: null };
 }
 
 function secretValues(config: AppConfig): string[] {
@@ -179,9 +246,11 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
   const steps: AgentStep[] = [];
   const queries = extractQueries(prompt);
   const seedMap = new Map<string, { entity: TasteEntity; score: number }>();
+  const searches = await Promise.all(
+    queries.map(async (query) => ({ query, hits: await client.search(query, 8) })),
+  );
 
-  for (const query of queries) {
-    const hits = await client.search(query, 8);
+  for (const { query, hits } of searches) {
     const kept = hits.filter((hit, index) => {
       const crossScript = !/[a-z]/i.test(query);
       const lexical = Math.max(hit.matchScore ?? 0, nameScore(query, hit.name));
@@ -212,13 +281,16 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
 
   const tagQueries = tagQueriesFor(prompt, seeds.map((seed) => seed.name));
   const tags: TasteTag[] = [];
-  for (const query of tagQueries) {
-    let found: TasteTag[] = [];
-    try {
-      found = await client.searchTags(query, 5);
-    } catch {
-      continue;
-    }
+  const tagBatches = await Promise.all(
+    tagQueries.map(async (query) => {
+      try {
+        return { query, found: await client.searchTags(query, 5) };
+      } catch {
+        return { query, found: [] as TasteTag[] };
+      }
+    }),
+  );
+  for (const { query, found } of tagBatches) {
     const accepted: string[] = [];
     for (const tag of found) {
       if (!tagFits(query, tag)) continue;
@@ -277,12 +349,16 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
                 : filterType === "urn:entity:book"
                   ? "books"
                   : "movies";
-        buckets[key] = result.entities.filter((entity) => !entityIds.includes(entity.id)).slice(0, 6);
+        const rows = result.entities.filter((entity) => !entityIds.includes(entity.id)).slice(0, 6);
+        buckets[key] = key === "places" ? relevantPlaces(prompt, rows) : rows;
       } catch {
         // The client already recorded the failed call. Other domains can still compile.
       }
     }),
   );
+
+  const rescued = await rescuePlaces(client, prompt, buckets.places);
+  buckets.places = rescued.places.filter((place) => !entityIds.includes(place.id));
 
   const anyEntities =
     seeds.length + buckets.artists.length + buckets.places.length + buckets.brands.length + buckets.books.length + buckets.movies.length;
@@ -308,6 +384,14 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
       result: row.result || "no rows",
     });
   }
+  if (rescued.note) {
+    steps.push({
+      why: rescued.note,
+      call: "GET /search",
+      detail: "types=urn:entity:place",
+      result: buckets.places.map((place) => place.name).join(", ") || "no place",
+    });
+  }
 
   return {
     graph: {
@@ -324,10 +408,7 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
 }
 
 function tagFits(query: string, tag: TasteTag): boolean {
-  const q = query.toLowerCase();
-  const name = tag.name.toLowerCase();
-  if (name === q || name.includes(q) || (name.length >= 4 && q.includes(name))) return true;
-  return tokens(name).some((token) => token === q || (token.length >= 4 && q.includes(token)));
+  return tagAccepts(query, tag.name);
 }
 
 function tagFitsPrompt(prompt: string, tag: TasteTag): boolean {

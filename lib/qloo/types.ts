@@ -69,7 +69,7 @@ export type InsightTarget =
 export interface TasteClient {
   readonly mode: "live" | "mock";
   readonly trace: QlooTraceCall[];
-  search(query: string, take?: number): Promise<TasteEntity[]>;
+  search(query: string, take?: number, types?: string): Promise<TasteEntity[]>;
   searchTags(query: string, take?: number): Promise<TasteTag[]>;
   insights(args: {
     filterType: InsightTarget;
