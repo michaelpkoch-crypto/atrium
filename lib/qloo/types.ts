@@ -75,6 +75,11 @@ export interface TasteClient {
     filterType: InsightTarget;
     entityIds: string[];
     tagIds: string[];
+    /** Tag ids passed as `filter.tags`, used to keep places inside a category. */
+    filterTagIds?: string[];
+    /** City or neighborhood passed as `filter.location.query` for places. */
+    location?: string;
     take?: number;
+    timeoutMs?: number;
   }): Promise<{ entities: TasteEntity[]; tags: TasteTag[] }>;
 }

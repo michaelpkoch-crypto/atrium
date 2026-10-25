@@ -88,7 +88,15 @@ function dedupe(entities: TasteEntity[]): TasteEntity[] {
     const current = map.get(entity.id);
     if (!current || (entity.affinity ?? -1) > (current.affinity ?? -1)) map.set(entity.id, entity);
   }
-  return [...map.values()];
+  const seen = new Set<string>();
+  const out: TasteEntity[] = [];
+  for (const entity of map.values()) {
+    const key = entity.name.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(entity);
+  }
+  return out;
 }
 
 function byAffinity(a: TasteEntity, b: TasteEntity): number {
@@ -286,9 +294,14 @@ function roomTitle(seeds: TasteEntity[], tags: TasteTag[], anchor: TasteEntity):
 }
 
 export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere {
-  const seeds = dedupe(graph.seeds).sort(byAffinity);
+  const seeds = dedupe(graph.seeds);
   const seedIds = new Set(seeds.map((seed) => seed.id));
-  const artists = dedupe(graph.artists).sort(byAffinity);
+  const artists = dedupe(graph.artists).sort((a, b) => {
+    const aSeed = seedIds.has(a.id) ? 1 : 0;
+    const bSeed = seedIds.has(b.id) ? 1 : 0;
+    if (aSeed !== bSeed) return bSeed - aSeed;
+    return byAffinity(a, b);
+  });
   const places = dedupe(graph.places).sort(byAffinity);
   const brands = dedupe(graph.brands).sort(byAffinity);
   const books = dedupe([...graph.books, ...seeds.filter((seed) => seed.type.includes("book"))]).sort(byAffinity);
@@ -531,7 +544,9 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     });
   }
 
-  const drinks = places.slice(0, 3).map((place) => {
+  const drinks: Atmosphere["drinks"] = [];
+  const drinkNames = new Set<string>();
+  for (const place of places.slice(0, 4)) {
     const { text, words } = entityText(place);
     let best: { name: string; hits: number; key: string } | null = null;
     for (const rule of DRINK_RULES) {
@@ -539,20 +554,22 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       const hits = rule.keys.filter((key) => matches(text, words, key)).length;
       if (hit && hits > 0 && (!best || hits > best.hits)) best = { name: rule.name, hits, key: hit };
     }
-    const name = best?.name ?? `House pour at ${place.name}`;
-    const because = best
-      ? `${best.hits} tag${best.hits === 1 ? "" : "s"} on ${place.name}, including “${best.key}”, selected ${name}.`
-      : `No pour rule matched the tags on ${place.name}, so the venue itself is the recommendation.`;
-    return {
-      name,
+    if (!best) continue;
+    const nameKey = best.name.toLowerCase();
+    if (drinkNames.has(nameKey)) continue;
+    drinkNames.add(nameKey);
+    const because = `${best.hits} tag${best.hits === 1 ? "" : "s"} on ${place.name}, including “${best.key}”, selected ${best.name}.`;
+    drinks.push({
+      name: best.name,
       venue: place.name,
       venueId: place.id,
       affinity: clampAffinity(place.affinity),
       because,
-      citation: cite(place, because, best?.key ?? place.tags[0]?.name ?? null),
+      citation: cite(place, because, best.key),
       gap: false,
-    };
-  });
+    });
+    if (drinks.length >= 3) break;
+  }
   if (!drinks.length) {
     const because = "Qloo returned no place, so the counter stays empty.";
     drinks.push({

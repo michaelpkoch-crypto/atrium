@@ -3,6 +3,8 @@ import { compileAtmosphere } from "@/lib/atmosphere/compile";
 import type { Atmosphere } from "@/lib/atmosphere/schema";
 import { readConfig, type AppConfig, type DispatchMode } from "@/lib/config";
 import { NoTasteMatch, PromptError } from "@/lib/agent/errors";
+import { knownProposal } from "@/lib/agent/propose";
+import { assembleGraph } from "@/lib/agent/assemble";
 import { extractQueries, nameScore, tagAccepts, tagQueriesFor, tokens } from "@/lib/agent/queries";
 import { relevantPlaces, rescuePlaces } from "@/lib/agent/rank";
 import type { AgentStep } from "@/lib/agent/steps";
@@ -123,12 +125,14 @@ export async function compileFromPrompt(
         agent = { kind: "llm", provider: config.llm.provider, model: config.llm.modelId, fallback: null };
       } else if (modeled.graph) {
         graph = modeled.graph;
-        const reason = modeled.diagnostics.modelError ?? "the model returned no ranking";
+        const reason = modeled.diagnostics.modelError;
         agent = {
           kind: "deterministic",
           provider: config.llm.provider,
           model: config.llm.modelId,
-          fallback: `The model did not rank the candidates (${reason}). Closest search hits were kept.`,
+          fallback: reason
+            ? `The model did not name the seeds (${reason}). Canonical names were confirmed on Qloo instead.`
+            : null,
         };
       }
     } catch (error) {
@@ -243,6 +247,20 @@ function liveWarnings(client: TasteClient, graph: TasteGraph): string[] {
 }
 
 export async function gatherGraph(client: TasteClient, prompt: string): Promise<{ graph: TasteGraph; steps: AgentStep[] }> {
+  const known = knownProposal(prompt);
+  if (known) {
+    const steps: AgentStep[] = [
+      {
+        why: known.reason,
+        call: "propose_seeds",
+        detail: "canonical names",
+        result: [...known.works.map((work) => work.name), ...known.people.map((person) => person.name)].join(", "),
+      },
+    ];
+    const graph = await assembleGraph(client, prompt, known, steps);
+    if (graph) return { graph, steps };
+  }
+
   const steps: AgentStep[] = [];
   const queries = extractQueries(prompt);
   const seedMap = new Map<string, { entity: TasteEntity; score: number }>();

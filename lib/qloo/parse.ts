@@ -1,3 +1,4 @@
+import { humanizeTagName } from "@/lib/agent/propose";
 import type { Explainer, TasteEntity, TasteTag } from "@/lib/qloo/types";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -44,7 +45,7 @@ export function normalizeTags(raw: unknown): TasteTag[] {
     const record = asRecord(item);
     if (!record) continue;
     const id = clip(record.id, 200) ?? clip(record.tag_id, 200) ?? clip(record.tag_value, 200);
-    const name = clip(record.name, 80);
+    const name = clip(humanizeTagName(clip(record.name, 80) ?? ""), 80);
     if (!id || !name || seen.has(id)) continue;
     seen.add(id);
     out.push({

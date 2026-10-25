@@ -85,7 +85,8 @@ describe("mock orchestrator", () => {
     expect(result.atmosphere.reading.map((book) => book.name)).toEqual(
       expect.arrayContaining(["Norwegian Wood"]),
     );
-    expect(["rain", "paper"]).toContain(result.atmosphere.visual.mode);
+    expect(["rain", "paper", "grain-warm"]).toContain(result.atmosphere.visual.mode);
+    expect(result.atmosphere.room.window).toBe("rain");
   });
 
   it("labels a synthetic graph when nothing matches", async () => {

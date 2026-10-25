@@ -369,7 +369,7 @@ function Comparison({
     <section className="grid gap-3 border border-white/10 bg-white/[0.03] p-3 sm:grid-cols-2">
       <div>
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-mono text-[10px] tracking-[0.16em] text-emerald-100/80 uppercase">What Qloo added</h2>
+          <h2 className="font-mono text-[10px] tracking-[0.16em] text-emerald-100/80 uppercase">What Qloo added vs plain</h2>
           <button type="button" className="text-[11px] text-white/60 underline-offset-2 hover:underline lg:hidden" onClick={() => onView(view === "qloo" ? "plain" : "qloo")}>
             {view === "qloo" ? "See plain room" : "See Atrium"}
           </button>

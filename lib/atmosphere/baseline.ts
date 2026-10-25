@@ -443,23 +443,22 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
     if (!added.some((item) => item.label === name)) added.push(row);
   };
 
-  for (const artist of atmosphere.music) {
-    if (artist.gap) continue;
-    push(
-      artist.name,
-      artist.affinity == null ? "Artist from /v2/insights" : `Artist from /v2/insights · affinity ${artist.affinity.toFixed(2)}`,
-    );
-  }
+  const instead = plain.artists.filter(Boolean)[0] ?? plain.assumptions[0] ?? "a generic mood";
+  const addedDetail = (kind: string, affinity: number | null) => {
+    const score = affinity == null ? "Kept after Qloo confirmed the name" : `Qloo affinity ${affinity.toFixed(2)}`;
+    return `${kind}. ${score}. The plain reading did not name this; it assumed ${instead}.`;
+  };
   for (const drink of atmosphere.drinks) {
     if (drink.gap) continue;
-    push(
-      drink.venue,
-      drink.affinity == null ? "Place from /v2/insights" : `Place from /v2/insights · affinity ${drink.affinity.toFixed(2)}`,
-    );
+    push(drink.venue, addedDetail(`Place that sets the counter, pouring ${drink.name}`, drink.affinity));
   }
-  for (const book of atmosphere.reading) push(book.name, "Book affinity");
-  for (const movie of atmosphere.pictures) push(movie.name, "Movie affinity");
-  for (const seed of atmosphere.seeds) push(seed.name, "Resolved by /search");
+  for (const seed of atmosphere.seeds) push(seed.name, addedDetail("Work or person confirmed by /search", null));
+  for (const artist of atmosphere.music) {
+    if (artist.gap) continue;
+    push(artist.name, addedDetail("Artist sitting next to the confirmed seeds", artist.affinity));
+  }
+  for (const book of atmosphere.reading) push(book.name, addedDetail("Book on the table", book.affinity));
+  for (const movie of atmosphere.pictures) push(movie.name, addedDetail("Picture on the wall", movie.affinity));
   for (const light of atmosphere.room.lights) {
     if (!light.citation.tag) continue;
     push(light.citation.tag, `Tag on ${light.citation.name} sets a ${light.kind.replace("-", " ")}`);
@@ -470,7 +469,7 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
   const lead = qlooAdded.slice(0, 3).map((item) => item.label).join(", ");
   const assumption = plain.assumptions[0] ?? "a generic mood";
   const headline = qlooAdded.length
-    ? `Qloo puts ${lead} in the room. The plain reading reached for ${assumption}.`
+    ? `Qloo adds ${lead}. The plain reading did not name them; it assumed ${assumption}.`
     : qlooScored.length
       ? `The plain reading guessed ${qlooScored[0].label}. Qloo scored that guess and the neighbors around it.`
       : `The plain reading stayed at ${assumption}. The room still cites the rows Qloo returned.`;

@@ -92,7 +92,10 @@ export class MockTasteClient implements TasteClient {
     filterType: InsightTarget;
     entityIds: string[];
     tagIds: string[];
+    filterTagIds?: string[];
+    location?: string;
     take?: number;
+    timeoutMs?: number;
   }): Promise<{ entities: TasteEntity[]; tags: TasteTag[] }> {
     const take = args.take ?? 6;
     const query: Record<string, string> = {
@@ -102,6 +105,11 @@ export class MockTasteClient implements TasteClient {
     };
     if (args.entityIds.length) query["signal.interests.entities"] = args.entityIds.join(",");
     if (args.tagIds.length) query["signal.interests.tags"] = args.tagIds.join(",");
+    if (args.filterTagIds?.length) {
+      query["filter.tags"] = args.filterTagIds.join(",");
+      query["operator.filter.tags"] = "union";
+    }
+    if (args.location && args.filterType === "urn:entity:place") query["filter.location.query"] = args.location;
 
     if (!args.entityIds.length && !args.tagIds.length) {
       this.trace.push({
@@ -162,6 +170,10 @@ export class MockTasteClient implements TasteClient {
 
     const entities = scored
       .filter((row) => row.fixture.type === args.filterType)
+      .filter((row) => {
+        if (!args.filterTagIds?.length) return true;
+        return row.fixture.tags.some((tag) => args.filterTagIds?.includes(tag.id));
+      })
       .slice(0, take)
       .map((row) =>
         toEntity(row.fixture, {

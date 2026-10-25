@@ -93,12 +93,16 @@ export class QlooClient implements TasteClient {
     filterType: InsightTarget;
     entityIds: string[];
     tagIds: string[];
+    filterTagIds?: string[];
+    location?: string;
     take?: number;
+    timeoutMs?: number;
   }): Promise<{ entities: TasteEntity[]; tags: TasteTag[] }> {
     const take = Math.min(Math.max(args.take ?? 6, 1), 20);
     const entityIds = sanitizeEntityIds(args.entityIds);
     const tagIds = sanitizeTagIds(args.tagIds);
-    if (!entityIds.length && !tagIds.length) {
+    const filterTagIds = sanitizeTagIds(args.filterTagIds ?? []);
+    if (!entityIds.length && !tagIds.length && !filterTagIds.length) {
       return { entities: [], tags: [] };
     }
     const query: Record<string, string> = {
@@ -108,8 +112,13 @@ export class QlooClient implements TasteClient {
     };
     if (entityIds.length) query["signal.interests.entities"] = entityIds.join(",");
     if (tagIds.length) query["signal.interests.tags"] = tagIds.join(",");
+    if (filterTagIds.length) {
+      query["filter.tags"] = filterTagIds.join(",");
+      query["operator.filter.tags"] = "union";
+    }
+    if (args.location && args.filterType === "urn:entity:place") query["filter.location.query"] = args.location;
 
-    const body = await this.get("/v2/insights", query);
+    const body = await this.get("/v2/insights", query, 0, args.timeoutMs ?? 6500);
     const signalIds = entityIds;
     const entities = unwrapEntities(body)
       .map((row) => normalizeEntity(row, false, signalIds))
@@ -121,7 +130,12 @@ export class QlooClient implements TasteClient {
     return { entities: entities.slice(0, take), tags: tags.slice(0, take) };
   }
 
-  private async get(path: "/search" | "/v2/insights" | "/v2/tags", query: Record<string, string>, attempt = 0): Promise<unknown> {
+  private async get(
+    path: "/search" | "/v2/insights" | "/v2/tags",
+    query: Record<string, string>,
+    attempt = 0,
+    timeoutMs = 8000,
+  ): Promise<unknown> {
     const url = new URL(this.options.baseUrl + path);
     for (const [key, value] of Object.entries(query)) {
       if (value) url.searchParams.set(key, value);
@@ -136,15 +150,16 @@ export class QlooClient implements TasteClient {
           Accept: "application/json",
           "X-Api-Key": this.options.apiKey,
         },
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(timeoutMs),
         cache: "no-store",
       });
     } catch (error) {
       const message = redactSecrets(error instanceof Error ? error.message : "Network error", [this.options.apiKey]);
       this.trace.push({ method: "GET", path, query, status: 0, resultCount: 0, mocked: false, error: message });
-      if (attempt < 1) {
+      // A timeout already cost the whole budget. Retrying it is what stretched compiles past 15s.
+      if (attempt < 1 && !isTimeout(error)) {
         await wait(350);
-        return this.get(path, query, attempt + 1);
+        return this.get(path, query, attempt + 1, timeoutMs);
       }
       throw new QlooError(message, 0, path);
     }
@@ -160,7 +175,7 @@ export class QlooClient implements TasteClient {
         error: `Retrying after HTTP ${response.status}.`,
       });
       await wait(response.status === 429 ? 700 : 350);
-      return this.get(path, query, attempt + 1);
+      return this.get(path, query, attempt + 1, timeoutMs);
     }
 
     const text = await response.text();
@@ -205,4 +220,8 @@ export class QlooClient implements TasteClient {
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError" || /aborted|timeout/i.test(error.message));
 }
