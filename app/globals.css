@@ -221,6 +221,36 @@
   animation: atrium-spin 4.8s linear infinite;
 }
 
+.room-lightning {
+  animation: atrium-lightning 6.5s steps(1, end) infinite;
+}
+
+.room-candle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: atrium-candle 2.8s ease-in-out infinite;
+}
+
+.room-neon {
+  animation: atrium-neon 0.16s steps(2, end) infinite;
+}
+
+.room-glitch {
+  animation: atrium-glitch 2.4s steps(2, end) infinite;
+}
+
+.room-ghost {
+  animation: atrium-ghost 7s ease-in-out infinite;
+}
+
+.room-static {
+  animation: atrium-flicker 0.35s steps(2, end) infinite;
+}
+
+.room-portrait {
+  animation: atrium-ghost 9s ease-in-out infinite;
+}
+
 .room-parallax {
   animation: atrium-parallax 18s ease-in-out infinite;
 }
@@ -279,6 +309,67 @@
   }
 }
 
+@keyframes atrium-lightning {
+  0%,
+  86%,
+  100% {
+    opacity: 0;
+  }
+  88%,
+  90% {
+    opacity: 0.72;
+  }
+  89% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes atrium-candle {
+  0%,
+  100% {
+    opacity: 0.72;
+  }
+  45% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes atrium-neon {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@keyframes atrium-glitch {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  30% {
+    transform: translate(3px, -1px);
+  }
+  55% {
+    transform: translate(-4px, 1px);
+  }
+}
+
+@keyframes atrium-ghost {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
 @keyframes atrium-mote {
   0%,
   100% {
@@ -322,7 +413,14 @@
   .room-rain,
   .room-mote,
   .room-spin,
-  .room-parallax {
+  .room-parallax,
+  .room-lightning,
+  .room-candle,
+  .room-neon,
+  .room-glitch,
+  .room-ghost,
+  .room-static,
+  .room-portrait {
     animation: none;
   }
 }

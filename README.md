@@ -138,7 +138,7 @@ The demo is a public Vercel app, with no login.
 2. Set `QLOO_API_KEY`, `QLOO_API_URL=https://hackathon.api.qloo.com`, and `QLOO_MODE=auto` for Production and Preview.
 3. Set `OPENAI_API_KEY` for Production and Preview. The default model is `gpt-4.1-mini`.
 4. Leave `ATMOSPHERE_DISPATCH=off` unless the target is a public webhook or a public Home Assistant URL.
-5. Open a preview, type a prompt or use one of the four examples, and read the trace and the comparison.
+5. Open a preview, type a prompt or use a sample (Halloween is the first), and read the trace and the comparison. The card leads with the lighting scene, the soundscape, and the screens.
 
 `/api/compile` allows 30 requests per 10 minutes per IP, and 150 across everyone on that server instance. The agent and the plain model run in parallel. The route sets `maxDuration` to 60 seconds. The platform may cap a plan lower than that. `/api/dispatch` stays at 12 per 10 minutes per IP. The limiter is in memory, so it applies per instance. A request body cannot choose the webhook, Hue, or Home Assistant address. `QLOO_API_URL` has to be an `https` host under `qloo.com` or the key is not sent.
 
@@ -147,8 +147,8 @@ The demo is a public Vercel app, with no login.
 - The color prior is a table of tag-name stems. A tag with no prior still lights a lamp, and the chip cites the entity or the tag. It does not say the fixture had no aesthetic tag.
 - The Qloo cache and the rate limit are in memory, per server instance. A cold start still calls Qloo. It does not fire the calls all at once.
 - The plain room is a live model only when a provider key is set. That key is set on Vercel Production and Preview. Local runs without it show the labeled cliché.
-- Sound is synthesized in the browser: a pad, a texture (rain, vinyl, water, crowd, air, or steam), and a pulse. No recorded tracks.
-- The poster is drawn type. Entity photos are not used as room art.
+- Sound is synthesized in the browser: a pad and a pulse from the Qloo artists, plus a scene bed (wind, a drone, rain, vinyl crackle, a fire). No recorded tracks.
+- A wall screen, a frame, and a marquee show a Qloo image when the entity returns one. Otherwise they are drawn type. This checkout cannot confirm live image URLs.
 - Hue is LAN-only. A public demo should use a webhook or a public Home Assistant URL.
 - Without `QLOO_API_KEY` the page uses the fixture graph and says **Mock fixture**.
 - Do not send personal data. Prompts should describe a taste, not a person.

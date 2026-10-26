@@ -45,6 +45,11 @@ describe("light dispatch", () => {
     expect(called).toBe(false);
     expect(result.dispatched).toBe(false);
     expect(result.preview.palette).toMatchObject({ primary: atmosphere.palette.primary });
+    expect(result.preview.lighting).toMatchObject({
+      scene: atmosphere.room.lightScene.name,
+      effect: atmosphere.room.lightScene.effect,
+      colors: atmosphere.room.lightScene.colors,
+    });
   });
 
   it("posts the palette to a webhook when configured", async () => {

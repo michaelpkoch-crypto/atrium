@@ -165,6 +165,10 @@ describe("seed proposals for the sample prompts", () => {
     expect(pourFor("The Green Dragon", ["pub"], "a neighborhood tavern")?.name).toBe("Ale");
     expect(pourFor("Casa Montaña", ["bodega", "wine"], "an evening out")?.name).toBe("Red wine");
     expect(pourFor("Some Room", ["venue"], "an evening out")?.name).toBe("House pour");
+    expect(pourFor("Some Room", ["venue"], "Halloween")?.name).toBe("Blacklight punch");
+    expect(pourFor("Some Room", ["venue"], "Christmas morning")?.name).toBe("Mulled wine");
+    expect(pourFor("Some Room", ["venue"], "Día de los Muertos")?.name).toBe("Horchata");
+    expect(pourFor("Some Room", ["venue"], "Super Bowl party")?.name).toBe("Lager");
     expect(broaderPlaceQueries(["diner"])).toEqual(expect.arrayContaining(["american diner", "roadside diner"]));
     expect(broaderPlaceQueries(["jazz bar"])).toEqual(expect.arrayContaining(["jazz club", "jazz lounge"]));
   });
@@ -330,7 +334,43 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.audio.description).toBe(
       "Qloo: Bridgerton fans lean Harry Styles and Olivia Rodrigo, so the pad is a string-quartet take on modern pop.",
     );
-    expect(result.comparison.headlines[0]).toBe(result.atmosphere.audio.description);
+    expect(result.comparison.headlines[0]).toMatch(/^Lights:/);
+    expect(result.comparison.headlines[1]).toMatch(/^Sound:/);
+    expect(result.comparison.headlines[2]).toMatch(/^Screens:/);
+    expect(result.comparison.headlines).toContain(result.atmosphere.audio.description);
+  });
+
+  it("drives lights, sound, and screens from a Halloween occasion", async () => {
+    expect(knownProposal("Halloween")?.works.map((work) => work.name)).toEqual([
+      "Halloween",
+      "Hocus Pocus",
+      "The Nightmare Before Christmas",
+    ]);
+    expect(knownProposal("Halloween")?.people.map((person) => person.name)).toEqual(["John Carpenter", "Danny Elfman"]);
+    expect(knownProposal("The Nightmare Before Christmas")?.works[0]?.name).toBe("Halloween");
+    expect(knownProposal("Christmas morning")?.scene.time).toBe("day");
+    expect(knownProposal("Día de los Muertos")?.city).toBe("Mexico City");
+    expect(knownProposal("Super Bowl party")?.placeQueries).toContain("sports bar");
+
+    const result = await compile("Halloween");
+    expect(result.graph.synthetic).toBe(false);
+    expect(result.graph.seeds.map((seed) => seed.name)).toEqual(
+      expect.arrayContaining(["Halloween", "Hocus Pocus", "The Nightmare Before Christmas", "John Carpenter", "Danny Elfman"]),
+    );
+    expect(result.atmosphere.room.lightScene.name).toBe("Blacklight");
+    expect(result.atmosphere.room.lightScene.effect).toBe("flicker");
+    expect(result.atmosphere.room.lightScene.citation.tag?.toLowerCase()).toMatch(/halloween|horror|spooky/);
+    expect(result.atmosphere.audio.beds).toEqual(expect.arrayContaining(["drone", "wind"]));
+    expect(result.atmosphere.audio.nowPlaying).toMatch(/Now playing: Blacklight/);
+    expect(result.atmosphere.audio.nowPlaying).toMatch(/Carpenter/);
+    expect(result.atmosphere.room.displays.map((screen) => screen.title).join(" ")).toMatch(/Halloween|Hocus Pocus|Nightmare/);
+    expect(result.atmosphere.drinks[0]?.name).toBe("Blacklight punch");
+    expect(result.comparison.headlines[0]).toMatch(/^Lights: Blacklight, from Qloo tag /);
+    expect(result.comparison.headlines[1]).toMatch(/^Sound:/);
+    expect(result.comparison.headlines[2]).toMatch(/^Screens:/);
+    expect(result.baseline.room.lightScene.name).toBe("Orange lights");
+    expect([...result.baseline.assumptions, ...result.baseline.artists].join(" ")).not.toMatch(/Carpenter|Elfman/);
+    expect(result.atmosphere.palette.ambient).toBe("#241038");
   });
 
   it("pours a cozy Ghibli kitchen from a cafe, not an onsen", async () => {
@@ -567,6 +607,7 @@ describe("artist and counter filters", () => {
     expect(resolveProposal("A Stranger Things basement in 1985", null).city).toBe("Atlanta");
     expect(resolveProposal("a Lord of the Rings tavern", null).city).toBe("Oxford");
     expect(placeCity("Tarantino road trip diner at 2am")).toBe("Los Angeles");
+    expect(placeCity("Día de los Muertos")).toBe("Mexico City");
     expect(placeCity("a quiet kitchen")).toBeNull();
     expect(sanitizeCity("a Wes Anderson brunch", "Madrid")).toBe("");
     expect(sanitizeCity("a weekend in Madrid", "Madrid")).toBe("Madrid");

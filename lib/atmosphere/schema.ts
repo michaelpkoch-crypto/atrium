@@ -68,6 +68,10 @@ export const objectKindSchema = z.enum([
   "teapot",
 ]);
 export const textureKindSchema = z.enum(["rain", "vinyl", "water", "crowd", "air", "steam", "tape"]);
+export const lightEffectSchema = z.enum(["flicker", "pulse", "lightning", "candle", "neon"]);
+export const soundBedSchema = z.enum(["wind", "creak", "thunder", "rain", "murmur", "vinyl", "fire", "drone", "chime"]);
+export const displayEffectSchema = z.enum(["glitch", "ghost", "static", "scanline", "kanji", "portrait", "menu"]);
+export const screenKindSchema = z.enum(["screen", "frame", "marquee"]);
 
 const boxSchema = z.object({
   x: z.number().min(0).max(1200),
@@ -104,6 +108,25 @@ export const roomSceneSchema = z.object({
   timeLabel: z.string().min(1).max(40),
   /** Year or decade taken from the prompt. Absent when the prompt names none. */
   eraLabel: z.string().min(1).max(40).optional(),
+  lightScene: z.object({
+    name: z.string().min(1).max(40),
+    effect: lightEffectSchema,
+    colors: z.tuple([hex, hex, hex]),
+    citation: citationSchema,
+  }),
+  displays: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        kind: screenKindSchema,
+        title: z.string().min(1).max(80),
+        imageUrl: artworkUrl.nullable(),
+        effect: displayEffectSchema,
+        citation: citationSchema,
+      }),
+    )
+    .min(1)
+    .max(3),
   windowBox: boxSchema,
   posterBox: boxSchema,
   lights: z.array(roomLightSchema).min(2).max(8),
@@ -173,6 +196,8 @@ export const atmosphereSchema = z.object({
     noise: z.number().min(0).max(1),
     filterHz: z.number().positive(),
     texture: textureKindSchema,
+    beds: z.array(soundBedSchema).min(1).max(3),
+    nowPlaying: z.string().min(1).max(220),
     description: z.string().min(1),
     citation: citationSchema,
     layers: z

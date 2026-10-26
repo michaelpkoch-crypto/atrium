@@ -119,6 +119,11 @@ function payloadFor(atmosphere: Atmosphere): Record<string, unknown> {
     },
     tempoBpm: atmosphere.audio.tempoBpm,
     source: atmosphere.provenance.source,
+    lighting: {
+      scene: atmosphere.room.lightScene.name,
+      effect: atmosphere.room.lightScene.effect,
+      colors: atmosphere.room.lightScene.colors,
+    },
     lights: atmosphere.room.lights.map((light) => ({
       id: light.id,
       label: light.label,

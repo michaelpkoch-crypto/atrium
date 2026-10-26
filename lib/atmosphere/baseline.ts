@@ -1,4 +1,5 @@
 import { eraFromPrompt, knownProposal, labelForScene, sceneFromPrompt, windowForScene, type Era } from "@/lib/agent/propose";
+import { displayEffectFor, plainChannel, type ScreenKind } from "@/lib/atmosphere/channels";
 import { hashString, hslToHex } from "@/lib/atmosphere/color";
 import { eraChipLabel, eraCitation, forceGlobe, gradeHex } from "@/lib/atmosphere/era";
 import { PLANS, type ObjectKind } from "@/lib/atmosphere/plans";
@@ -61,6 +62,82 @@ type Pack = {
 };
 
 const PACKS: Pack[] = [
+  {
+    id: "halloween",
+    keys: ["halloween", "hocus", "nightmare", "before christmas", "spooky", "skeleton"],
+    plan: "living",
+    window: "night-city",
+    title: "Orange and plastic",
+    poster: "BOO",
+    logline: "Orange string lights, a plastic skeleton, and a fog machine. No film and no score.",
+    assumptions: ["orange string lights", "a plastic skeleton", "a bowl of candy", "a fog machine"],
+    artists: ["a spooky playlist"],
+    colors: ["#e07a2f", "#1a120c", "#f4efe6", "#7a3412"],
+    objects: [
+      { kind: "plant", label: "Plastic skeleton" },
+      { kind: "table", label: "Candy bowl" },
+      { kind: "chair", label: "Orange string lights" },
+    ],
+    tempo: 90,
+    texture: "air",
+  },
+  {
+    id: "christmas",
+    keys: ["christmas", "noel", "stocking"],
+    plan: "living",
+    window: "day-pastel",
+    title: "Tinsel morning",
+    poster: "TINSEL",
+    logline: "Red tinsel, a plastic tree, and a generic carol. No film and no pianist.",
+    assumptions: ["red tinsel", "a plastic tree", "a generic carol", "wrapping paper on the floor"],
+    artists: ["a generic carol"],
+    colors: ["#7a1e1e", "#e7c27a", "#f4efe6", "#1f4d32"],
+    objects: [
+      { kind: "plant", label: "Plastic tree" },
+      { kind: "table", label: "Wrapping paper" },
+      { kind: "cup", label: "Cocoa" },
+    ],
+    tempo: 96,
+    texture: "air",
+  },
+  {
+    id: "muertos",
+    keys: ["muertos", "ofrenda", "marigold"],
+    plan: "living",
+    window: "dusk",
+    title: "Paper flowers",
+    poster: "PAPEL",
+    logline: "Paper flowers and a sugar skull. No film and no composer.",
+    assumptions: ["paper flowers", "a sugar skull", "an orange cloth", "a candle with no name"],
+    artists: ["a generic folk playlist"],
+    colors: ["#e39a45", "#c23b22", "#f4efe6", "#3a1d14"],
+    objects: [
+      { kind: "plant", label: "Paper flowers" },
+      { kind: "table", label: "Sugar skull" },
+      { kind: "cup", label: "Generic drink" },
+    ],
+    tempo: 88,
+    texture: "air",
+  },
+  {
+    id: "bowl",
+    keys: ["super bowl", "halftime", "touchdown"],
+    plan: "living",
+    window: "night-city",
+    title: "Snack table",
+    poster: "GAME DAY",
+    logline: "A snack table, plastic cups, and a generic sports anthem.",
+    assumptions: ["a snack table", "plastic cups", "a generic sports anthem", "a foam finger"],
+    artists: ["a generic sports anthem"],
+    colors: ["#1d4e89", "#c23b22", "#f4efe6", "#10203f"],
+    objects: [
+      { kind: "table", label: "Snack table" },
+      { kind: "glass", label: "Plastic cup" },
+      { kind: "sofa", label: "Sectional" },
+    ],
+    tempo: 120,
+    texture: "crowd",
+  },
   {
     id: "blade",
     keys: ["blade", "runner", "cyberpunk", "android"],
@@ -250,6 +327,7 @@ export function sceneFromPlain(args: {
   assumptions: string[];
   timeLabel?: string;
   era?: Era | null;
+  prompt?: string;
 }): RoomScene {
   const plan = PLANS[args.plan];
   const day = args.window === "day-pastel" || args.window === "day-concrete";
@@ -316,11 +394,32 @@ export function sceneFromPlain(args: {
       citation: baselineCitation("Generic object", "Plain reading. No Qloo entity was consulted.", 40 + objects.length),
     });
   }
+  const channel = plainChannel(args.prompt ?? "");
+  const kinds: ScreenKind[] = ["screen", "frame", "marquee"];
+  const titles = [args.poster, args.objects[0]?.label ?? args.kicker, args.assumptions[0] ?? "A cliché"];
   return roomSceneSchema.parse({
     plan: args.plan,
     window: args.window,
     timeLabel,
     ...(args.era ? { eraLabel: args.era.label } : {}),
+    lightScene: {
+      name: channel.name,
+      effect: channel.effect,
+      colors: channel.colors,
+      citation: baselineCitation(channel.name, "Plain reading. This lighting scene was not chosen from a Qloo entity or tag.", 9),
+    },
+    displays: kinds.map((kind, index) => ({
+      id: `plain-screen-${index}-${kind}`,
+      kind,
+      title: (titles[index] || "Cliché").slice(0, 80),
+      imageUrl: null,
+      effect: displayEffectFor(channel, kind),
+      citation: baselineCitation(
+        titles[index] || "Cliché",
+        "Plain reading. This screen was not chosen from a Qloo entity.",
+        10 + index,
+      ),
+    })),
     windowBox: plan.windowBox,
     posterBox: plan.posterBox,
     lights,
@@ -374,6 +473,7 @@ export function stereotypeBaseline(prompt: string, note?: string): PlainRoom {
     objects: pack.objects,
     assumptions: pack.assumptions,
     era,
+    prompt,
   });
   return {
     source: "stereotype",
@@ -436,6 +536,7 @@ export function plainRoomFromModel(args: {
     assumptions: safeAssumptions,
     timeLabel: args.timeLabel,
     era,
+    prompt: args.prompt,
   });
   const tempo = Math.max(48, Math.min(140, Math.round(args.tempoBpm) || 80));
   return {
@@ -530,23 +631,20 @@ export function compareRooms(prompt: string, atmosphere: Atmosphere, plain: Plai
   const qlooAdded = added.slice(0, 6);
   const qlooScored = scored.slice(0, 3);
   const assumption = assumptionPhrase(plain.assumptions[0] ?? "a generic mood");
-  const headlines: string[] = [];
   const audience = audienceLine(
     prompt,
     atmosphere.music.map((row) => ({ name: row.name, gap: row.gap })),
   );
-  if (audience) headlines.push(audience);
-  const drink = atmosphere.drinks.find((row) => !row.gap);
-  if (drink && !mentioned(drink.venue, prompt)) headlines.push(`${drink.venue} pours ${drink.name}.`);
-  const tempoArtist = atmosphere.music.find((row) => !row.gap);
-  if (tempoArtist && !mentioned(tempoArtist.name, prompt)) {
-    headlines.push(`${tempoArtist.name} sets the tempo at ${atmosphere.audio.tempoBpm} BPM.`);
-  }
-  const missed = qlooAdded.find((item) => item.label !== drink?.venue && item.label !== tempoArtist?.name);
-  if (missed) headlines.push(`${missed.label} is in the room. The plain reading did not name it.`);
-  const lamp = atmosphere.room.lights.find((light) => light.citation.tag)?.citation.tag;
-  if (lamp && headlines.length < 4) headlines.push(`${lamp} colors the lamps.`);
-  const lines = [...headlines.slice(0, 4), assumption];
+  const light = atmosphere.room.lightScene;
+  const lightLine = light.citation.tag
+    ? `Lights: ${light.name}, from Qloo tag ${light.citation.tag} on ${light.citation.name}`
+    : `Lights: ${light.name}, from ${light.citation.name}`;
+  const soundLine = `Sound: ${atmosphere.audio.nowPlaying.replace(/^Now playing:\s*/i, "")}`;
+  const pictured = atmosphere.room.displays.some((item) => item.imageUrl);
+  const screenLine = `Screens: ${atmosphere.room.displays.map((item) => item.title).join(", ")}${pictured ? ", with the image Qloo returned" : ""}`;
+  const lines = [lightLine, soundLine, screenLine];
+  if (audience) lines.push(audience);
+  lines.push(assumption);
 
   return {
     headline: lines[0] ?? assumption,

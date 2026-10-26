@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AudioLines, VolumeX } from "lucide-react";
 
+import type { SoundBed } from "@/lib/atmosphere/channels";
 import type { Atmosphere } from "@/lib/atmosphere/schema";
 import type { TextureKind } from "@/lib/atmosphere/families";
 import { Button } from "@/components/ui/button";
@@ -70,6 +71,7 @@ class RoomTone {
     });
 
     this.textureLayer(context, master, texture.texture, texture.noise, texture.filterHz);
+    this.beds(context, master, texture.beds, texture.texture);
     this.pulse(context, master, texture.tempoBpm);
   }
 
@@ -150,6 +152,81 @@ class RoomTone {
     lfo.start();
     this.oscillators.push(lfo);
     this.nodes.push(gain);
+  }
+
+  private beds(context: AudioContext, master: GainNode, beds: SoundBed[], texture: TextureKind) {
+    const wanted = new Set(beds);
+    if (wanted.has("drone")) {
+      for (const frequency of [110, 155.56]) {
+        const osc = context.createOscillator();
+        const gain = context.createGain();
+        osc.type = "sine";
+        osc.frequency.value = frequency;
+        gain.gain.value = 0.07;
+        osc.connect(gain);
+        gain.connect(master);
+        osc.start();
+        this.oscillators.push(osc);
+        this.nodes.push(gain);
+      }
+    }
+    if (wanted.has("wind")) this.noiseBed(context, master, "highpass", 1400, 0.06, true);
+    if (wanted.has("murmur")) this.noiseBed(context, master, "bandpass", 480, 0.05, true);
+    if (wanted.has("fire")) this.noiseBed(context, master, "lowpass", 700, 0.06, false);
+    if (wanted.has("vinyl") && texture !== "vinyl") this.noiseBed(context, master, "bandpass", 2200, 0.04, false);
+    if (wanted.has("rain") && texture !== "rain") this.noiseBed(context, master, "highpass", 1800, 0.05, false);
+    if (wanted.has("creak")) this.occasional(context, master, 8000, 180, 0.08);
+    if (wanted.has("thunder")) this.occasional(context, master, 12000, 55, 0.16);
+    if (wanted.has("chime")) this.occasional(context, master, 9000, 880, 0.05);
+  }
+
+  private noiseBed(
+    context: AudioContext,
+    master: GainNode,
+    type: BiquadFilterType,
+    frequency: number,
+    amount: number,
+    wobble: boolean,
+  ) {
+    const noise = loopNoise(context);
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    filter.type = type;
+    filter.frequency.value = frequency;
+    if (type === "bandpass") filter.Q.value = 0.7;
+    gain.gain.value = amount;
+    if (wobble) this.wobble(context, filter.frequency, 0.08, frequency * 0.18);
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(master);
+    noise.start();
+    this.nodes.push(noise, filter, gain);
+  }
+
+  private occasional(context: AudioContext, master: GainNode, everyMs: number, frequency: number, peak: number) {
+    const osc = context.createOscillator();
+    const filter = context.createBiquadFilter();
+    const gain = context.createGain();
+    osc.type = frequency < 100 ? "sine" : "triangle";
+    osc.frequency.value = frequency;
+    filter.type = "bandpass";
+    filter.frequency.value = frequency;
+    filter.Q.value = 4;
+    gain.gain.value = 0;
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(master);
+    osc.start();
+    this.oscillators.push(osc);
+    this.nodes.push(filter, gain);
+    const timer = window.setInterval(() => {
+      const now = context.currentTime;
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(peak, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + (frequency < 100 ? 1.4 : 0.45));
+    }, everyMs);
+    this.timers.push(timer);
   }
 
   private pulse(context: AudioContext, master: GainNode, bpm: number) {
@@ -278,10 +355,13 @@ export function AudioDesk({
         </div>
       </div>
       {texture ? (
-        <p className="text-xs leading-5 text-white/70">
-          {texture.description}
-          {names.length ? ` Inspired by ${names.join(", ")}.` : ""}
-        </p>
+        <>
+          <p className="text-sm leading-5 text-white">{texture.nowPlaying}</p>
+          <p className="text-xs leading-5 text-white/70">
+            {texture.description}
+            {names.length && !/inspired by/i.test(texture.nowPlaying) ? ` Inspired by ${names.join(", ")}.` : ""}
+          </p>
+        </>
       ) : (
         <p className="text-xs text-white/55">{empty ?? "The bed starts after a room is compiled. It is synthesized, not a recording."}</p>
       )}

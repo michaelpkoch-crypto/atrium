@@ -48,6 +48,7 @@ reading Murakami on a rainy night → Norwegian Wood, Kafka on the Shore; books;
 Blade Runner meets a 1970s jazz bar → Blade Runner movie; Vangelis artist; placeQueries jazz bar, jazz club; placeTags jazz; rejectTags brutal death; time night; weather clear.
 Tarantino road trip diner at 2am → Pulp Fiction, Reservoir Dogs; movies; Quentin Tarantino person; Ennio Morricone artist; placeQueries diner, american diner; placeTags diner; moodTags neon, retro, crime; time night; brightness dim; rejectTags brutality, bathroom, warehouse.
 Bridgerton garden tea party → Bridgerton tv; Pride and Prejudice movie; Vitamin String Quartet artist; placeQueries tea room, tea house; placeTags tea, garden; moodTags regency, romance, pastel; time day; brightness bright; rejectTags poetry, horror, steamy. A place named only Garden or Gården is not a venue.
+Halloween → Halloween, Hocus Pocus, The Nightmare Before Christmas; movies; John Carpenter and Danny Elfman artists; moodTags horror, spooky, halloween. Christmas morning is time day. Día de los Muertos is Mexico City. A Super Bowl party is a sports bar, and the city stays empty.
 workKinds values are movie, tv, or book. personKinds values are person or artist.
 city is a real place the venues should be near, or empty. Stranger Things is Atlanta. The Lord of the Rings is Oxford. Tarantino and Blade Runner are Los Angeles. Murakami is Tokyo. Never answer Madrid or Spain unless the prompt says them.`;
 

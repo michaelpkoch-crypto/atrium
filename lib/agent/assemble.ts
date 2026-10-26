@@ -315,7 +315,7 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
     });
   });
 
-  return { seeds: seeds.slice(0, 4), artists, movies, books, places, tags, placeTags };
+  return { seeds: seeds.slice(0, 5), artists, movies, books, places, tags, placeTags };
 }
 
 async function searchBoth(client: TasteClient, query: string, types: string): Promise<TasteEntity[]> {

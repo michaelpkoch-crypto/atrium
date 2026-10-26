@@ -1,4 +1,5 @@
-import { hslToHex, hashString } from "@/lib/atmosphere/color";
+import { bedPhrase, channelScene, displayEffectFor, lightFlicker, type ScreenKind } from "@/lib/atmosphere/channels";
+import { hslToHex, hashString, mixHex } from "@/lib/atmosphere/color";
 import { audienceLine } from "@/lib/atmosphere/baseline";
 import { pourFor } from "@/lib/atmosphere/drinks";
 import { eraAmbient, eraChipLabel, eraCitation, forceGlobe, gradeHex } from "@/lib/atmosphere/era";
@@ -412,6 +413,66 @@ function inhabitRoom(
   objects.sort((a, b) => Number(a.kind !== "rug") - Number(b.kind !== "rug"));
 }
 
+function hostForChannel(tags: string[], pool: TasteEntity[], anchor: TasteEntity): TasteEntity {
+  const wanted = new Set(tags.map((tag) => tag.toLowerCase()));
+  return pool.find((entity) => entity.tags.some((tag) => wanted.has(tag.name.toLowerCase()))) ?? anchor;
+}
+
+function safeImage(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildDisplays(entities: TasteEntity[], channel: ReturnType<typeof channelScene>): Atmosphere["room"]["displays"] {
+  const picked: TasteEntity[] = [];
+  const ordered = [...entities.filter((entity) => entity.imageUrl), ...entities.filter((entity) => !entity.imageUrl)];
+  for (const entity of ordered) {
+    if (!entity || picked.some((item) => item.id === entity.id)) continue;
+    picked.push(entity);
+    if (picked.length === 3) break;
+  }
+  const kinds: ScreenKind[] = ["screen", "frame", "marquee"];
+  const slides = picked.length ? picked : entities.filter(Boolean).slice(0, 1);
+  return slides.slice(0, 3).map((entity, index) => {
+    const kind = kinds[index] ?? "screen";
+    const imageUrl = safeImage(entity.imageUrl);
+    return {
+      id: `screen-${index}-${kind}`,
+      kind,
+      title: entity.name.slice(0, 80),
+      imageUrl,
+      effect: displayEffectFor(channel, kind),
+      citation: cite(
+        entity,
+        imageUrl
+          ? `${entity.name} is on the ${kind}. The picture is the image Qloo returned.`
+          : `${entity.name} is on the ${kind}. Qloo returned no image, so the screen is drawn type.`,
+        entity.tags[0]?.name ?? null,
+      ),
+    };
+  });
+}
+
+function nowPlayingLine(
+  sceneName: string,
+  beds: ReturnType<typeof channelScene>["beds"],
+  rows: { name: string; gap: boolean }[],
+  citation: Citation,
+): string {
+  const names = rows.filter((row) => !row.gap).map((row) => row.name).slice(0, 3);
+  const inspired = names.length
+    ? `inspired by ${names.join(", ")}`
+    : citation.tag
+      ? `from the Qloo tag ${citation.tag} on ${citation.name}`
+      : `from ${citation.name}`;
+  return `Now playing: ${sceneName}, ${bedPhrase(beds)}, ${inspired}`.slice(0, 220);
+}
+
 export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere {
   const seeds = dedupe(graph.seeds);
   const seedIds = new Set(seeds.map((seed) => seed.id));
@@ -531,16 +592,36 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     .slice(0, 8)
     .map((light, index) => ({ ...light, color: gradeHex(light.color, era, index) }));
   forceGlobe(lights, era);
+  const channel = channelScene(prompt, [...graph.tags, ...pool.flatMap((entity) => entity.tags)].map((tag) => tag.name), era);
+  const lightHost = hostForChannel(channel.tags, pool, anchor);
+  const lightTag = lightHost.tags.find((tag) => channel.tags.some((name) => tag.name.toLowerCase() === name.toLowerCase())) ?? null;
+  const lightCitation = cite(
+    lightHost,
+    lightTag
+      ? `${channel.name} comes from the Qloo tag “${lightTag.name}” on ${lightHost.name}.`
+      : `${channel.name} comes from ${lightHost.name}.`,
+    lightTag?.name ?? null,
+  );
+  const lightMix = channel.name === "Blacklight" || channel.name === "Amber" ? 0.78 : 0.62;
+  for (const [index, light] of lights.entries()) {
+    light.color = mixHex(light.color, channel.colors[index % channel.colors.length], lightMix);
+    light.flicker = light.kind === "string" || light.kind === "led-strip" ? light.flicker : lightFlicker(channel.effect);
+  }
 
   const heroHue = lead?.hue ?? hashString(anchor.id) % 360;
   const heroSat = lead?.sat ?? 40;
   const primary = lights[0].color;
   const secondary = lights[1]?.color ?? hslToHex((heroHue + 22) % 360, heroSat * 0.7, day ? 62 : 64);
   const accent = lights.find((light) => light.color !== primary)?.color ?? hslToHex((heroHue + 48) % 360, heroSat, 50);
-  const ambient = eraAmbient(
+  let ambient = eraAmbient(
     era,
     gradeHex(hslToHex(heroHue, heroSat * (day ? 0.28 : 0.42), day ? (window === "day-concrete" ? 58 : 78) : 13), era, 3),
   );
+  if (era?.decade !== "1970s") {
+    if (channel.name === "Blacklight") ambient = "#241038";
+    else if (channel.name === "Marigold") ambient = "#3a1d14";
+    else if (channel.name === "Stadium") ambient = "#10203f";
+  }
   const ink = day ? "#241c18" : "#f4efe6";
   const heroCitation = lights[0].citation;
 
@@ -840,6 +921,8 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       noise: NOISE[texture],
       filterHz: FILTER[texture],
       texture,
+      beds: channel.beds.slice(0, 3),
+      nowPlaying: nowPlayingLine(channel.name, channel.beds, music, lightCitation),
       description,
       citation: tempoCitation,
       layers: [
@@ -853,6 +936,16 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       window,
       timeLabel: labelForScene(scene),
       ...(era ? { eraLabel: era.label } : {}),
+      lightScene: {
+        name: channel.name,
+        effect: channel.effect,
+        colors: channel.colors,
+        citation: lightCitation,
+      },
+      displays: buildDisplays(
+        [...seeds, ...artists, ...movies, ...books, anchor],
+        channel,
+      ),
       windowBox: plan.windowBox,
       posterBox: plan.posterBox,
       lights,

@@ -1,7 +1,8 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
+import { displayEffectFor } from "@/lib/atmosphere/channels";
 import { hexToRgb, mixHex } from "@/lib/atmosphere/color";
 import type { RoomLight, RoomObject, RoomScene } from "@/lib/atmosphere/schema";
 import type { WindowScene } from "@/lib/atmosphere/families";
@@ -62,10 +63,31 @@ export function RoomFrame({
   label: string;
 }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [slide, setSlide] = useState(0);
+  const cycleKey = `${scene.lightScene.name}:${scene.displays.map((item) => item.id).join("|")}`;
+  const [seenCycle, setSeenCycle] = useState(cycleKey);
+  if (seenCycle !== cycleKey) {
+    setSeenCycle(cycleKey);
+    setSlide(0);
+  }
+  useEffect(() => {
+    if (scene.displays.length < 2) return;
+    const media = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+    if (media?.matches) return;
+    const timer = window.setInterval(() => setSlide((value) => value + 1), 6500);
+    return () => window.clearInterval(timer);
+  }, [scene]);
   const day = scene.timeLabel === "Day";
   const selectedLight = scene.lights.find((light) => light.id === selected);
   const selectedObject = scene.objects.find((object) => object.id === selected);
+  const selectedScreen = scene.displays.find((item) => item.id === selected);
+  const selectedScene = selected === "lights" ? scene.lightScene : null;
   const selectedDisplay = selected === "display" ? scene.display : null;
+  const lightSource = scene.lightScene.citation.tag
+    ? `from Qloo tag ${scene.lightScene.citation.tag} on ${scene.lightScene.citation.name}`
+    : scene.lightScene.citation.type === "baseline"
+      ? "plain reading"
+      : `from ${scene.lightScene.citation.name}`;
   const eraChip =
     selected === "era" && scene.eraLabel
       ? {
@@ -84,9 +106,13 @@ export function RoomFrame({
     ? { title: chipText(selectedLight.label), citation: selectedLight.citation }
     : selectedObject
       ? { title: chipText(selectedObject.label), citation: selectedObject.citation }
-      : selectedDisplay
-        ? { title: chipText(selectedDisplay.title), citation: selectedDisplay.citation }
-        : eraChip;
+      : selectedScreen
+        ? { title: chipText(selectedScreen.title), citation: selectedScreen.citation }
+        : selectedScene
+          ? { title: chipText(selectedScene.name), citation: selectedScene.citation }
+          : selectedDisplay
+            ? { title: chipText(selectedDisplay.title), citation: selectedDisplay.citation }
+            : eraChip;
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-2">
@@ -100,6 +126,7 @@ export function RoomFrame({
           label={label}
           selected={selected}
           interactive={interactive}
+          slide={slide}
           onSelect={(id) => setSelected((current) => (current === id ? null : id))}
           onClear={() => setSelected(null)}
         />
@@ -115,6 +142,11 @@ export function RoomFrame({
           </figcaption>
         ) : null}
       </figure>
+      {interactive ? (
+        <p className="text-xs leading-4 text-white/85">
+          Lights: {scene.lightScene.name}, {lightSource}
+        </p>
+      ) : null}
       {interactive ? (
         <div className="relative min-w-0">
           <div className="no-scrollbar flex w-full min-w-0 gap-1.5 overflow-x-auto pb-1" aria-label="Room fixtures">
@@ -165,6 +197,8 @@ function fixtureChips(scene: RoomScene, palette: Palette): { id: string; text: s
     chips.push({ id, text: label, swatch: chipSwatch(swatch, palette.accent) });
   };
   if (scene.eraLabel) push("era", `Era: ${scene.eraLabel}, from the prompt`, palette.accent);
+  push("lights", scene.lightScene.name, scene.lightScene.colors[0]);
+  for (const screen of scene.displays) push(screen.id, screen.title, palette.accent);
   push("display", scene.display.title, palette.accent);
   for (const light of scene.lights) push(light.id, light.label, light.color);
   for (const object of scene.objects) push(object.id, object.label, palette.secondary);
@@ -201,6 +235,7 @@ function RoomSvg({
   label,
   selected,
   interactive,
+  slide,
   onSelect,
   onClear,
 }: {
@@ -209,6 +244,7 @@ function RoomSvg({
   label: string;
   selected: string | null;
   interactive: boolean;
+  slide: number;
   onSelect: (id: string) => void;
   onClear: () => void;
 }) {
@@ -269,6 +305,7 @@ function RoomSvg({
       </defs>
 
       <rect width="1200" height="500" fill={`url(#${uid}-wall)`} />
+      {scene.lightScene.name === "Blacklight" ? <rect width="1200" height="500" fill="#6d28d9" opacity="0.34" /> : null}
       {seventies(scene.eraLabel) ? <rect width="1200" height="500" fill="#e39a45" opacity="0.38" /> : null}
       {eighties(scene.eraLabel) ? <WoodPanel /> : null}
       <rect width="1200" height="180" fill={`url(#${uid}-ceiling)`} />
@@ -281,6 +318,7 @@ function RoomSvg({
       ))}
 
       <WindowView uid={uid} scene={scene.window} box={scene.windowBox} accent={palette.accent} />
+      <ScreenWall scene={scene} palette={palette} slide={slide} selected={selected} interactive={interactive} onSelect={onSelect} />
       <Poster box={scene.posterBox} display={scene.display} palette={palette} day={day} selected={selected === "display"} />
       {interactive ? (
         <Hit id="display" label={`Display, ${scene.display.title}`} selected={selected === "display"} onSelect={onSelect}>
@@ -289,10 +327,10 @@ function RoomSvg({
       ) : null}
 
       {scene.lights.map((light) => (
-        <LightCone key={`cone-${light.id}`} uid={uid} light={light} />
+        <LightCone key={`cone-${light.id}`} uid={uid} light={light} effect={scene.lightScene.effect} />
       ))}
       {scene.lights.map((light) => (
-        <Glow key={`glow-${light.id}`} uid={uid} light={light} />
+        <Glow key={`glow-${light.id}`} uid={uid} light={light} effect={scene.lightScene.effect} />
       ))}
       <FloorSheen lights={scene.lights} />
 
@@ -310,6 +348,9 @@ function RoomSvg({
       <text x="28" y="478" fill={day ? "#3a312c" : "#f4efe6"} opacity="0.7" fontSize="18" fontFamily="ui-monospace, monospace">
         {scene.timeLabel}
       </text>
+      {scene.lightScene.effect === "lightning" ? (
+        <rect width="1200" height="760" fill="#f4efe6" className="room-lightning" pointerEvents="none" />
+      ) : null}
       <rect width="1200" height="760" fill={`url(#${uid}-vignette)`} pointerEvents="none" />
     </svg>
   );
@@ -351,7 +392,7 @@ function Hit({
   );
 }
 
-function Glow({ uid, light }: { uid: string; light: RoomLight }) {
+function Glow({ uid, light, effect }: { uid: string; light: RoomLight; effect: RoomScene["lightScene"]["effect"] }) {
   const wide = light.kind === "string" || light.kind === "led-strip";
   const cx = wide && light.x2 ? (light.x + light.x2) / 2 : light.x;
   const rx = wide && light.x2 ? Math.abs(light.x2 - light.x) / 2 : 70 + light.intensity * 80;
@@ -364,12 +405,20 @@ function Glow({ uid, light }: { uid: string; light: RoomLight }) {
       ry={ry}
       fill={`url(#${uid}-${light.id})`}
       filter={`url(#${uid}-bloom)`}
-      className={light.flicker > 0.5 ? "room-flicker" : "room-pulse"}
+      className={lightMotion(effect)}
     />
   );
 }
 
-function LightCone({ uid, light }: { uid: string; light: RoomLight }) {
+function lightMotion(effect: RoomScene["lightScene"]["effect"]): string {
+  if (effect === "lightning") return "room-lightning";
+  if (effect === "candle") return "room-candle";
+  if (effect === "neon") return "room-neon";
+  if (effect === "flicker") return "room-flicker";
+  return "room-pulse";
+}
+
+function LightCone({ uid, light, effect }: { uid: string; light: RoomLight; effect: RoomScene["lightScene"]["effect"] }) {
   if (light.kind === "string" || light.kind === "led-strip") return null;
   const spread = 64 + light.intensity * 110;
   const floorY = 620;
@@ -377,7 +426,7 @@ function LightCone({ uid, light }: { uid: string; light: RoomLight }) {
     <polygon
       points={`${light.x},${light.y + 8} ${light.x - spread},${floorY} ${light.x + spread},${floorY}`}
       fill={`url(#${uid}-cone-${light.id})`}
-      className={light.flicker > 0.5 ? "room-flicker" : "room-pulse"}
+      className={lightMotion(effect)}
       pointerEvents="none"
     />
   );
@@ -569,6 +618,208 @@ function Sky({ scene, box, accent }: { scene: WindowScene; box: RoomScene["windo
       ))}
     </>
   );
+}
+
+function screenSlots(scene: RoomScene) {
+  const blocks = [scene.posterBox, scene.windowBox]
+    .map((box) => ({ x: box.x, right: box.x + box.w }))
+    .sort((a, b) => a.x - b.x);
+  let cursor = 24;
+  let best = { x: 40, w: 0 };
+  for (const block of blocks) {
+    const gap = block.x - cursor;
+    if (gap > best.w) best = { x: cursor, w: gap };
+    cursor = Math.max(cursor, block.right + 20);
+  }
+  const tail = 1176 - cursor;
+  if (tail > best.w) best = { x: cursor, w: tail };
+  const inner = Math.max(200, Math.min(best.w, 520));
+  const frameW = inner > 300 ? 118 : 92;
+  const screenW = Math.max(128, inner - frameW - 16);
+  return {
+    screen: { x: best.x, y: 246, w: screenW, h: 128 },
+    frame: { x: best.x + screenW + 14, y: 230, w: frameW, h: 156 },
+    marquee: { x: best.x, y: 392, w: Math.min(inner, screenW + frameW + 14), h: 42 },
+  };
+}
+
+function ScreenWall({
+  scene,
+  palette,
+  slide,
+  selected,
+  interactive,
+  onSelect,
+}: {
+  scene: RoomScene;
+  palette: Palette;
+  slide: number;
+  selected: string | null;
+  interactive: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const uid = useId().replace(/:/g, "");
+  const slots = screenSlots(scene);
+  const count = Math.max(1, scene.displays.length);
+  const at = (offset: number, kind: RoomScene["displays"][number]["kind"]) => {
+    const display = scene.displays[(slide + offset) % count];
+    if (!display) return null;
+    return {
+      ...display,
+      kind,
+      effect: displayEffectFor(
+        {
+          name: scene.lightScene.name,
+          effect: scene.lightScene.effect,
+          colors: scene.lightScene.colors,
+          beds: ["murmur"],
+          displayEffect: display.effect,
+          tags: [],
+        },
+        kind,
+      ),
+    };
+  };
+  const panels = [
+    { box: slots.screen, display: at(0, "screen") },
+    { box: slots.frame, display: at(1, "frame") },
+    { box: slots.marquee, display: at(2, "marquee") },
+  ];
+  return (
+    <g>
+      {panels.map((panel) =>
+        panel.display ? (
+          <DisplayPanel
+            key={panel.display.kind}
+            uid={uid}
+            box={panel.box}
+            display={panel.display}
+            palette={palette}
+            selected={selected === panel.display.id}
+            interactive={interactive}
+            onSelect={onSelect}
+          />
+        ) : null,
+      )}
+    </g>
+  );
+}
+
+function DisplayPanel({
+  uid,
+  box,
+  display,
+  palette,
+  selected,
+  interactive,
+  onSelect,
+}: {
+  uid: string;
+  box: { x: number; y: number; w: number; h: number };
+  display: RoomScene["displays"][number];
+  palette: Palette;
+  selected: boolean;
+  interactive: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const clip = `${uid}-${display.kind}`;
+  const lines = wrap(display.title, Math.max(6, Math.floor(box.w / 14)), display.kind === "marquee" ? 1 : 3);
+  const body = (
+    <g aria-label={`${display.kind}, ${display.title}`}>
+      <rect x={box.x - 8} y={box.y - 8} width={box.w + 16} height={box.h + 16} rx="4" fill="#14110e" stroke={selected ? "#fff" : palette.accent} strokeWidth={selected ? 4 : 2} />
+      <clipPath id={clip}>
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} />
+      </clipPath>
+      <g clipPath={`url(#${clip})`}>
+        <rect x={box.x} y={box.y} width={box.w} height={box.h} fill={palette.primary} />
+        <rect x={box.x} y={box.y} width={box.w} height={box.h * 0.45} fill={palette.secondary} opacity="0.85" />
+        {lines.map((line, index) => (
+          <text
+            key={`${display.id}-${line}`}
+            x={box.x + 10}
+            y={box.y + (display.kind === "marquee" ? box.h * 0.68 : 36 + index * 28)}
+            fill="#f4efe6"
+            fontSize={display.kind === "marquee" ? 18 : 20}
+            fontFamily="Georgia, serif"
+            className={display.effect === "glitch" ? "room-glitch" : display.effect === "portrait" ? "room-portrait" : undefined}
+          >
+            {line}
+          </text>
+        ))}
+        {display.imageUrl ? (
+          <image href={display.imageUrl} x={box.x} y={box.y} width={box.w} height={box.h} preserveAspectRatio="xMidYMid slice">
+            <title>{display.title}</title>
+          </image>
+        ) : null}
+        <ScreenEffect effect={display.effect} box={box} accent={palette.accent} />
+      </g>
+    </g>
+  );
+  if (!interactive) return body;
+  return (
+    <Hit id={display.id} label={`${display.kind}, ${display.title}`} selected={selected} onSelect={onSelect}>
+      {body}
+    </Hit>
+  );
+}
+
+function ScreenEffect({
+  effect,
+  box,
+  accent,
+}: {
+  effect: RoomScene["displays"][number]["effect"];
+  box: { x: number; y: number; w: number; h: number };
+  accent: string;
+}) {
+  if (effect === "glitch") {
+    return <rect x={box.x} y={box.y + box.h * 0.35} width={box.w} height="6" fill="#39ff88" opacity="0.8" className="room-glitch" />;
+  }
+  if (effect === "ghost") {
+    return (
+      <g className="room-ghost" fill="#f5f3ff">
+        <ellipse cx={box.x + box.w * 0.5} cy={box.y + box.h * 0.48} rx={box.w * 0.18} ry={box.h * 0.28} opacity="0.55" />
+        <circle cx={box.x + box.w * 0.43} cy={box.y + box.h * 0.44} r="3" fill="#241038" />
+        <circle cx={box.x + box.w * 0.57} cy={box.y + box.h * 0.44} r="3" fill="#241038" />
+      </g>
+    );
+  }
+  if (effect === "static") {
+    return (
+      <g className="room-static">
+        {Array.from({ length: 8 }, (_, index) => (
+          <rect key={index} x={box.x} y={box.y + index * (box.h / 8)} width={box.w} height="2" fill="#fff" opacity={index % 2 ? 0.35 : 0.12} />
+        ))}
+      </g>
+    );
+  }
+  if (effect === "scanline") {
+    return (
+      <g>
+        {Array.from({ length: 10 }, (_, index) => (
+          <rect key={index} x={box.x} y={box.y + 6 + index * (box.h / 10)} width={box.w} height="1.5" fill="#39e7ff" opacity="0.45" />
+        ))}
+      </g>
+    );
+  }
+  if (effect === "kanji") {
+    const x = box.x + box.w * 0.3;
+    const y = box.y + 16;
+    return (
+      <g fill="none" stroke={accent} strokeWidth="3" opacity="0.9">
+        <path d={`M ${x} ${y} V ${y + box.h * 0.6} M ${x - 16} ${y + 18} H ${x + 16}`} />
+        <path d={`M ${x + 28} ${y} V ${y + box.h * 0.7} M ${x + 16} ${y + 28} H ${x + 46}`} />
+      </g>
+    );
+  }
+  if (effect === "menu") {
+    return (
+      <text x={box.x + 10} y={box.y + box.h - 12} fill="#f4efe6" fontSize="12" fontFamily="ui-monospace, monospace" opacity="0.8">
+        TONIGHT
+      </text>
+    );
+  }
+  return null;
 }
 
 function Poster({

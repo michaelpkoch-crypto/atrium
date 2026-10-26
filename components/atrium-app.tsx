@@ -75,6 +75,22 @@ const IDLE_SCENE: RoomScene = {
     { id: "idle-sofa", kind: "sofa", x: 360, y: 560, label: "Empty sofa", citation: idleCitation },
     { id: "idle-table", kind: "table", x: 680, y: 540, label: "Empty table", citation: idleCitation },
   ],
+  lightScene: {
+    name: "Night",
+    effect: "pulse",
+    colors: ["#c4a574", "#8a7058", "#f4efe6"],
+    citation: idleCitation,
+  },
+  displays: [
+    {
+      id: "idle-screen",
+      kind: "screen",
+      title: "Name a taste",
+      imageUrl: null,
+      effect: "portrait",
+      citation: idleCitation,
+    },
+  ],
   display: {
     kicker: "Atrium",
     title: "Name a taste",
@@ -507,7 +523,8 @@ function dispatchCopy(result: RoomPayload): string {
     return `${dispatch.result.dispatched ? "Sent." : "Not sent."} ${dispatch.result.reason}`;
   }
   if (dispatch.mode === "off") {
-    return "Dispatch is off. The button shows the palette it would send to Hue, Home Assistant, or a webhook.";
+    const scene = result.atmosphere.room.lightScene;
+    return `Dispatch is off. Send to my real lights would push ${scene.name} (${scene.effect}) and ${scene.colors.join(", ")}.`;
   }
   return dispatch.configured
     ? `Ready for ${dispatch.mode}. A Hue bridge has to be on the same network as this server.`

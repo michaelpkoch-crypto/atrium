@@ -50,6 +50,10 @@ function promptDrink(prompt: string): { name: string; key: string } | null {
     return { name: "Cola", key: "soda" };
   }
   if (/\b(tavern|taberna|alehouse)\b/.test(text)) return { name: "Ale", key: "ale" };
+  if (/halloween|hocus pocus|nightmare before christmas/.test(text)) return { name: "Blacklight punch", key: "halloween" };
+  if (/christmas/.test(text)) return { name: "Mulled wine", key: "christmas" };
+  if (/d[ií]a de los muertos|dia de los muertos|muertos|ofrenda/.test(text)) return { name: "Horchata", key: "muertos" };
+  if (/super bowl|halftime/.test(text)) return { name: "Lager", key: "bowl" };
   return null;
 }
 

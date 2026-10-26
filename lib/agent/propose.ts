@@ -24,6 +24,67 @@ export type Proposal = {
   reason: string;
 };
 
+const HALLOWEEN: Proposal = {
+  works: [
+    { name: "Halloween", kind: "movie" },
+    { name: "Hocus Pocus", kind: "movie" },
+    { name: "The Nightmare Before Christmas", kind: "movie" },
+  ],
+  people: [
+    { name: "John Carpenter", kind: "artist" },
+    { name: "Danny Elfman", kind: "artist" },
+  ],
+  placeQueries: ["cocktail bar"],
+  placeTags: ["halloween"],
+  moodTags: ["horror", "spooky", "halloween"],
+  rejectTags: ["jazz", "pastel", "brunch"],
+  city: "",
+  scene: { time: "night", weather: "clear", brightness: "dim" },
+  reason: "Halloween means the films and the scores: Halloween, Hocus Pocus, The Nightmare Before Christmas, John Carpenter, Danny Elfman.",
+};
+
+const CHRISTMAS: Proposal = {
+  works: [
+    { name: "It's a Wonderful Life", kind: "movie" },
+    { name: "A Charlie Brown Christmas", kind: "tv" },
+  ],
+  people: [{ name: "Vince Guaraldi", kind: "artist" }],
+  placeQueries: ["holiday market"],
+  placeTags: ["christmas", "holiday"],
+  moodTags: ["christmas", "holiday"],
+  rejectTags: ["horror", "noir"],
+  city: "",
+  scene: { time: "day", weather: "clear", brightness: "bright" },
+  reason: "Christmas morning means It's a Wonderful Life, A Charlie Brown Christmas, and Vince Guaraldi.",
+};
+
+const MUERTOS: Proposal = {
+  works: [
+    { name: "Coco", kind: "movie" },
+    { name: "The Book of Life", kind: "movie" },
+  ],
+  people: [{ name: "Michael Giacchino", kind: "artist" }],
+  placeQueries: ["marigold market"],
+  placeTags: ["marigold", "folk"],
+  moodTags: ["marigold", "folk"],
+  rejectTags: ["horror", "noir"],
+  city: "Mexico City",
+  scene: { time: "dusk", weather: "clear", brightness: "dim" },
+  reason: "Día de los Muertos means Coco, The Book of Life, and Michael Giacchino, near Mexico City.",
+};
+
+const SUPER_BOWL: Proposal = {
+  works: [{ name: "Super Bowl", kind: "tv" }],
+  people: [],
+  placeQueries: ["sports bar"],
+  placeTags: ["football", "sports"],
+  moodTags: ["football", "sports", "party"],
+  rejectTags: ["horror", "jazz"],
+  city: "",
+  scene: { time: "night", weather: "clear", brightness: "bright" },
+  reason: "A Super Bowl party means the broadcast and a sports bar. The city changes with the host, so none is pinned.",
+};
+
 const GHIBLI: Proposal = {
   works: [
     { name: "Spirited Away", kind: "movie" },
@@ -176,7 +237,11 @@ export function roomKicker(prompt: string, plan: string, placeHint = ""): string
 export function knownProposal(prompt: string): Proposal | null {
   const text = prompt.toLowerCase();
   let base: Proposal | null = null;
-  if (/ghibli|spirited away|miyazaki|hisaishi/.test(text)) base = GHIBLI;
+  if (/halloween|hocus pocus|nightmare before christmas/.test(text)) base = HALLOWEEN;
+  else if (/christmas/.test(text)) base = CHRISTMAS;
+  else if (/d[ií]a de los muertos|dia de los muertos|muertos|ofrenda/.test(text)) base = MUERTOS;
+  else if (/super bowl|halftime/.test(text)) base = SUPER_BOWL;
+  else if (/ghibli|spirited away|miyazaki|hisaishi/.test(text)) base = GHIBLI;
   else if (/blade runner/.test(text)) base = BLADE;
   else if (/wes anderson|grand budapest|tenenbaums/.test(text)) base = WES;
   else if (/murakami|norwegian wood|kafka on the shore/.test(text)) base = MURAKAMI;
@@ -274,6 +339,7 @@ export function eraFromPrompt(prompt: string): Era | null {
  */
 export function placeCity(prompt: string): string | null {
   const text = prompt.toLowerCase();
+  if (/d[ií]a de los muertos|dia de los muertos|muertos|ofrenda/.test(text)) return "Mexico City";
   if (/stranger things/.test(text)) return "Atlanta";
   if (/\b(lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien)\b/.test(text)) return "Oxford";
   if (/\b(tarantino|pulp fiction|reservoir dogs)\b/.test(text)) return "Los Angeles";

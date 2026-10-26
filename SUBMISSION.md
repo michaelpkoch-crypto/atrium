@@ -59,8 +59,8 @@ Search confirms Bridgerton, Pride and Prejudice, and Vitamin String Quartet. Pla
 - Vercel AI SDK `generateText` with `Output.object`. One call names the works. One call, with no tools, writes the plain room. A short third call can drop tags that do not fit the mood. The compiler, not the model, writes the room JSON. Default model `gpt-4.1-mini`.
 - With no model key the same Qloo client runs in a fixed order, and the plain side is a labeled cliché. That path is for local development. The hosted app has the key.
 - With no Qloo key the page uses the fixture graph and the badge says Mock fixture.
-- WebAudio: detuned pad, a texture buffer, and a tempo pulse. Artwork is a vector room, not an entity photo.
-- Tests cover compiler output, citation integrity, the four example prompts, the comparison, the client URL and header, and the dispatch flag.
+- WebAudio: a detuned pad, a texture, a tempo pulse, and a scene bed (a drone and wind for Halloween, vinyl for a jazz room). The screen, frame, and marquee use a Qloo image when `properties.image` is an https URL, and drawn type otherwise.
+- Tests cover compiler output, citation integrity, the sample prompts (including Halloween), the comparison, the client URL and header, and the dispatch flag.
 
 ## Challenges
 

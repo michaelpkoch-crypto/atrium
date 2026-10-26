@@ -103,6 +103,20 @@ describe("atmosphere compiler", () => {
     expect(room.room.objects.some((object) => object.kind === "teapot" || object.kind === "cake")).toBe(true);
   });
 
+  it("keeps a Qloo image on the screen and drops anything that is not https", () => {
+    const pictured = entity("film-pic", "Halloween", "urn:entity:movie", ["Horror"]);
+    pictured.imageUrl = "https://images.example.test/halloween.jpg";
+    const room = compileAtmosphere("Halloween", graph({ seeds: [pictured] }));
+    expect(room.room.lightScene.name).toBe("Blacklight");
+    expect(room.room.displays.some((screen) => screen.imageUrl === "https://images.example.test/halloween.jpg")).toBe(true);
+    expect(room.room.displays.find((screen) => screen.imageUrl)?.citation.detail).toMatch(/image Qloo returned/);
+
+    const insecure = entity("film-http", "Hocus Pocus", "urn:entity:movie", ["Horror"]);
+    insecure.imageUrl = "http://images.example.test/plain.jpg";
+    const fallback = compileAtmosphere("Halloween", graph({ seeds: [insecure] }));
+    expect(fallback.room.displays.every((screen) => screen.imageUrl == null)).toBe(true);
+  });
+
   it("grades a 1970s room amber and hangs a globe", () => {
     const film = entity("film-1", "Blade Runner", "urn:entity:movie", ["Jazz", "Noir"]);
     const room = compileAtmosphere("Blade Runner meets a 1970s jazz bar", graph({ seeds: [film] }));
