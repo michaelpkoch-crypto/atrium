@@ -213,8 +213,8 @@ export function AtriumApp() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[#0c0b0a] text-[#f4efe6]">
       <div id="prompt-bar" className="z-40 shrink-0 border-b border-white/10 bg-[#0c0b0a]">
-        <header className="flex min-w-0 flex-wrap items-center justify-between gap-2 px-2 pt-1.5 pb-0.5 sm:px-6 sm:pt-2 sm:pb-1">
-          <div className="min-w-0">
+        <header className="flex items-center justify-between gap-3 px-2 pt-1.5 pb-0.5 sm:px-6 sm:pt-2 sm:pb-1">
+          <div>
             <p className="font-display text-xl tracking-tight sm:text-3xl">Atrium</p>
             <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room · MIT License</p>
           </div>
@@ -238,7 +238,7 @@ export function AtriumApp() {
           <PromptDock prompt={prompt} loading={loading} hasRoom={Boolean(result)} onPrompt={setPrompt} onSubmit={compile} />
         </div>
       </div>
-      <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
+      <div className="min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
         <main className="min-w-0 max-w-full space-y-4 px-4 py-4 sm:px-6">
           <div
             className={result ? "grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2" : undefined}

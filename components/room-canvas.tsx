@@ -138,8 +138,10 @@ export function RoomFrame({
 export function chipText(text: string): string {
   const clean = text.replace(/\s+/g, " ").trim();
   if (/^era:/i.test(clean)) return clean.slice(0, 40);
-  const words = clean.split(" ").slice(0, 3).join(" ");
-  return words.length > 22 ? `${words.slice(0, 21)}…` : words;
+  const words = clean.split(" ").slice(0, 3);
+  while (words.length > 1 && words.join(" ").length > 22) words.pop();
+  const label = words.join(" ");
+  return label.length > 22 ? `${label.slice(0, 21)}…` : label;
 }
 
 export function chipSwatch(swatch: string, fallback: string): string {
@@ -148,7 +150,7 @@ export function chipSwatch(swatch: string, fallback: string): string {
   const r = (value >> 16) & 255;
   const g = (value >> 8) & 255;
   const b = value & 255;
-  if (r + g + b < 140) return mixHex(hex, "#e6d3b3", 0.62);
+  if (r + g + b < 200) return mixHex(hex, "#e6d3b3", 0.62);
   return hex;
 }
 
@@ -707,9 +709,9 @@ function eighties(label: string | undefined): boolean {
 
 function WoodPanel() {
   return (
-    <g opacity="0.45">
+    <g opacity="0.8">
       {Array.from({ length: 9 }, (_, index) => (
-        <rect key={index} x={36 + index * 130} y="36" width="10" height="450" fill="#6a4a32" />
+        <rect key={index} x={36 + index * 130} y="36" width="14" height="450" fill="#a56b3c" />
       ))}
     </g>
   );

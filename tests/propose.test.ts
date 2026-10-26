@@ -579,6 +579,7 @@ describe("artist and counter filters", () => {
     expect(placeObjectKind({ name: "Bathhouse Tea Counter", tags: [{ name: "Bathhouse" }] }, "tub")).toBe("tub");
     expect(placeObjectKind({ name: "Basement Tavern", tags: [{ name: "Bar" }] }, "tub")).toBe("bar");
     expect(chipText("The atmosphere is tense and amber")).toBe("The atmosphere is");
+    expect(chipText("Stranger Things Basement 1985")).toBe("Stranger Things");
     expect(chipText("Era: 1985, from the prompt")).toBe("Era: 1985, from the prompt");
     expect(chipSwatch("#3a2a22", "#e6d3b3")).not.toBe("#3a2a22");
     const bill = artist("Bill Evans", ["Jazz"], 0.7);
