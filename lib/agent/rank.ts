@@ -232,17 +232,18 @@ function attribute(
   const explained = artist.explainers
     .filter((row) => seedIds.has(row.id))
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-  if (!explained.length) return { keep: true, via: `${listed} (no explainer)` };
+  const token = overlap[0] ?? listed;
+  if (!explained.length) return { keep: true, via: `${token} from the music seeds` };
   const top = explained[0].score;
   const music = explained.filter((row) => musicIds.has(row.id) && row.score >= top - 0.05);
-  if (music.length) return { keep: true, via: `${listed} (${music[0].name})` };
+  if (music.length) return { keep: true, via: `${token} from ${music[0].name}` };
   const people = explained.filter((row) => personIds.has(row.id) && row.score >= top - 0.05);
   if (people.length) {
-    const matched = people.find((person) => overlap.some((token) => personTokens.get(person.id)?.has(token)));
-    if (matched) return { keep: true, via: `${listed} (${matched.name})` };
-    return { keep: false, via: `${listed} from ${people[0].name}, not a music seed` };
+    const matched = people.find((person) => overlap.some((item) => personTokens.get(person.id)?.has(item)));
+    if (matched) return { keep: true, via: `${token} from ${matched.name}` };
+    return { keep: false, via: `${token} from ${people[0].name}, not a music seed` };
   }
-  return { keep: true, via: `${listed} (${explained[0].name})` };
+  return { keep: true, via: `${token} from ${explained[0].name}` };
 }
 
 function countableTokens(entity: TasteEntity): string[] {

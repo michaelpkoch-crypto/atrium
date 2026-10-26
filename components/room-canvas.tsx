@@ -2,7 +2,7 @@
 
 import { useId, useState, type ReactNode } from "react";
 
-import { hexToRgb } from "@/lib/atmosphere/color";
+import { hexToRgb, mixHex } from "@/lib/atmosphere/color";
 import type { RoomLight, RoomObject, RoomScene } from "@/lib/atmosphere/schema";
 import type { WindowScene } from "@/lib/atmosphere/families";
 import { provenanceLine } from "@/components/labels";
@@ -66,13 +66,27 @@ export function RoomFrame({
   const selectedLight = scene.lights.find((light) => light.id === selected);
   const selectedObject = scene.objects.find((object) => object.id === selected);
   const selectedDisplay = selected === "display" ? scene.display : null;
+  const eraChip =
+    selected === "era" && scene.eraLabel
+      ? {
+          title: `Era: ${scene.eraLabel}, from the prompt`,
+          citation: {
+            id: "prompt-era",
+            name: "Prompt",
+            type: "baseline",
+            affinity: null,
+            detail: `Era: ${scene.eraLabel}, from the prompt. Not a Qloo entity.`,
+            tag: null,
+          },
+        }
+      : null;
   const chip = selectedLight
-    ? { title: selectedLight.label, citation: selectedLight.citation }
+    ? { title: chipText(selectedLight.label), citation: selectedLight.citation }
     : selectedObject
-      ? { title: selectedObject.label, citation: selectedObject.citation }
+      ? { title: chipText(selectedObject.label), citation: selectedObject.citation }
       : selectedDisplay
-        ? { title: selectedDisplay.title, citation: selectedDisplay.citation }
-        : null;
+        ? { title: chipText(selectedDisplay.title), citation: selectedDisplay.citation }
+        : eraChip;
 
   return (
     <div className="flex w-full min-w-0 flex-col gap-2">
@@ -121,15 +135,34 @@ export function RoomFrame({
   );
 }
 
+export function chipText(text: string): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (/^era:/i.test(clean)) return clean.slice(0, 40);
+  const words = clean.split(" ").slice(0, 3).join(" ");
+  return words.length > 22 ? `${words.slice(0, 21)}…` : words;
+}
+
+export function chipSwatch(swatch: string, fallback: string): string {
+  const hex = /^#[0-9a-fA-F]{6}$/.test(swatch) ? swatch : /^#[0-9a-fA-F]{6}$/.test(fallback) ? fallback : "#e6d3b3";
+  const value = Number.parseInt(hex.slice(1), 16);
+  const r = (value >> 16) & 255;
+  const g = (value >> 8) & 255;
+  const b = value & 255;
+  if (r + g + b < 140) return mixHex(hex, "#e6d3b3", 0.62);
+  return hex;
+}
+
 function fixtureChips(scene: RoomScene, palette: Palette): { id: string; text: string; swatch: string }[] {
   const chips: { id: string; text: string; swatch: string }[] = [];
   const seen = new Set<string>();
   const push = (id: string, text: string, swatch: string) => {
-    const key = text.trim().toLowerCase();
+    const label = chipText(text);
+    const key = label.trim().toLowerCase();
     if (!key || seen.has(key)) return;
     seen.add(key);
-    chips.push({ id, text, swatch });
+    chips.push({ id, text: label, swatch: chipSwatch(swatch, palette.accent) });
   };
+  if (scene.eraLabel) push("era", `Era: ${scene.eraLabel}, from the prompt`, palette.accent);
   push("display", scene.display.title, palette.accent);
   for (const light of scene.lights) push(light.id, light.label, light.color);
   for (const object of scene.objects) push(object.id, object.label, palette.secondary);
@@ -154,8 +187,8 @@ function ChipButton({
       onClick={onClick}
       className={`flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-left text-[11px] ${pressed ? "border-white/70 bg-white/15 text-white" : "border-white/15 bg-white/5 text-white/80"}`}
     >
-      <span className="size-2.5 rounded-full" style={{ background: swatch }} />
-      <span className="max-w-28 truncate">{text}</span>
+      <span className="size-2.5 shrink-0 rounded-full" style={{ background: swatch }} />
+      <span className={text.toLowerCase().startsWith("era:") ? "max-w-48 truncate" : "max-w-28 truncate"}>{text}</span>
     </button>
   );
 }
@@ -186,7 +219,7 @@ function RoomSvg({
   const wood = day ? "#6a5346" : "#3a2a22";
 
   return (
-    <svg viewBox="0 0 1200 760" className="aspect-[5/4] w-full max-w-full sm:aspect-[16/10]" role="img" aria-label={label} onClick={onClear}>
+    <svg viewBox="0 0 1200 760" className="aspect-[5/4] w-full max-w-full overflow-hidden sm:aspect-[16/10]" role="img" aria-label={label} onClick={onClear}>
       <defs>
         <linearGradient id={`${uid}-wall`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor={wallTop} />
@@ -234,6 +267,7 @@ function RoomSvg({
       </defs>
 
       <rect width="1200" height="500" fill={`url(#${uid}-wall)`} />
+      {eighties(scene.eraLabel) ? <WoodPanel /> : null}
       <rect width="1200" height="180" fill={`url(#${uid}-ceiling)`} />
       <rect width="1200" height="500" filter={`url(#${uid}-grain)`} opacity={day ? 0.05 : 0.12} />
       <rect width="1200" height="26" fill="#000" opacity={day ? 0.08 : 0.38} />
@@ -649,11 +683,34 @@ function LightShape({ light }: { light: RoomLight }) {
       </g>
     );
   }
+  if (light.kind === "globe") {
+    return (
+      <g>
+        <line x1={light.x} y1="26" x2={light.x} y2={light.y - 22} stroke="#d9d0c4" strokeWidth="2" />
+        <circle cx={light.x} cy={light.y} r="22" fill={light.color} />
+        <circle cx={light.x - 6} cy={light.y - 6} r="6" fill="#fff" opacity="0.35" />
+      </g>
+    );
+  }
   return (
     <g>
       <line x1={light.x} y1="26" x2={light.x} y2={light.y - 16} stroke="#d9d0c4" strokeWidth="2" />
       <polygon points={`${light.x - 26},${light.y + 10} ${light.x},${light.y - 18} ${light.x + 26},${light.y + 10}`} fill={light.color} />
       <ellipse cx={light.x} cy={light.y + 12} rx="16" ry="5" fill={light.color} opacity="0.85" />
+    </g>
+  );
+}
+
+function eighties(label: string | undefined): boolean {
+  return Boolean(label && (/^198\d$/.test(label) || label === "1980s"));
+}
+
+function WoodPanel() {
+  return (
+    <g opacity="0.45">
+      {Array.from({ length: 9 }, (_, index) => (
+        <rect key={index} x={36 + index * 130} y="36" width="10" height="450" fill="#6a4a32" />
+      ))}
     </g>
   );
 }
@@ -791,6 +848,26 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
   }
   if (kind === "textile") {
     return <rect x={x - 18} y={y - 70} width="36" height="64" fill={accent} opacity="0.85" />;
+  }
+  if (kind === "crt") {
+    return (
+      <g>
+        <rect x={x - 36} y={y - 48} width="72" height="52" rx="4" fill={fill} />
+        <rect x={x - 26} y={y - 40} width="52" height="32" fill={accent} />
+        <rect x={x - 16} y={y + 4} width="32" height="8" fill={fill} />
+      </g>
+    );
+  }
+  if (kind === "lava") {
+    return (
+      <g>
+        <rect x={x - 10} y={y - 8} width="20" height="8" rx="1" fill={fill} />
+        <rect x={x - 8} y={y - 52} width="16" height="44" rx="8" fill={accent} opacity="0.9" />
+        <circle cx={x} cy={y - 40} r="4" fill="#ffb703" />
+        <circle cx={x} cy={y - 26} r="3" fill="#fb8500" />
+        <rect x={x - 10} y={y - 58} width="20" height="8" rx="1" fill={fill} />
+      </g>
+    );
   }
   if (kind === "plant") {
     return (

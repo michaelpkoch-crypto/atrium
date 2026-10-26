@@ -3,6 +3,7 @@ import {
   broaderPlaceQueries,
   confirmsName,
   chooseSignalTags,
+  counterRejected,
   dedupeByName,
   offVibe,
   placeFits,
@@ -42,27 +43,29 @@ export async function assembleGraph(
   if (!found.seeds.length && !found.tags.length && !found.places.length) return null;
 
   const entityIds = found.seeds.map((seed) => seed.id);
+  const artistIds = artistSignalIds(found.seeds);
   const tagIds = found.tags.map((tag) => tag.id);
   const placeTagIds = found.placeTags.map((tag) => tag.id);
   const buckets = emptyBuckets();
 
   // Artists and places are the rows a judge looks for. Brands, books, and movies are already
-  // the seeds, so they do not get their own insights call.
+  // the seeds, so they do not get their own insights call. Artist neighbors are asked from the
+  // music seeds (and the film or show). The person stays on the place call.
   const targets: InsightTarget[] = ["urn:entity:artist", "urn:entity:place"];
   await Promise.all(
     targets.map(async (filterType) => {
       try {
         const place = filterType === "urn:entity:place";
-        const result = await client.insights({
-          filterType,
-          entityIds,
-          tagIds: place ? placeTagIds : [],
-          filterTagIds: place ? placeTagIds : undefined,
-          location: place ? proposal.city : undefined,
-          take: 4,
-          // Place insights are the call that was aborting on a cold compile. Artists stay on the short budget.
-          timeoutMs: place ? 15_000 : 6_000,
-        });
+        const result = place
+          ? await placeInsights(client, proposal.city, entityIds, placeTagIds)
+          : await client.insights({
+              filterType,
+              entityIds: artistIds,
+              tagIds: [],
+              take: 4,
+              timeoutMs: 6_000,
+            });
+        if (!result) return;
         const key = keyFor(filterType);
         buckets[key] = result.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
       } catch {
@@ -75,7 +78,8 @@ export async function assembleGraph(
     buckets[key] = keepInsightRows(buckets[key]);
   }
 
-  const insightPlaces = buckets.places.filter((place) => placeFits(place, proposal, prompt));
+  const rawPlaces = buckets.places;
+  const insightPlaces = rawPlaces.filter((place) => placeFits(place, proposal, prompt));
   let places = rankCounterPlaces(dedupeByName([...insightPlaces, ...found.places]), proposal).slice(0, 4);
   if (!places.length) {
     const synonyms = broaderPlaceQueries(proposal.placeQueries);
@@ -90,6 +94,20 @@ export async function assembleGraph(
         call: "GET /search",
         detail: `types=urn:entity:place; ${synonyms.join(", ")}`,
         result: places.map((place) => place.name).join(", ") || "no place kept",
+      });
+    }
+  }
+  if (!places.length) {
+    places = rankCounterPlaces(
+      dedupeByName(rawPlaces.filter((place) => !counterRejected(place.name))),
+      proposal,
+    ).slice(0, 4);
+    if (places.length) {
+      steps.push({
+        why: "No place matched the room category, so the best venue that can still pour was kept.",
+        call: "rank_places",
+        detail: proposal.placeTags.join(", ") || proposal.placeQueries.join(", ") || "place insights",
+        result: places.map((place) => place.name).join(", "),
       });
     }
   }
@@ -110,14 +128,15 @@ export async function assembleGraph(
   );
   buckets.artists = rankedArtists.artists;
   const artistInsights = client.trace.find((call) => call.path === "/v2/insights" && call.query["filter.type"] === "urn:entity:artist");
+  const artistLines = rankedArtists.report
+    .slice(0, 8)
+    .map((row) => `${row.name}: ${row.kept ? "kept" : "dropped"} via ${row.via}`)
+    .join("; ");
   steps.push({
-    why: "A neighbor stays when it shares a genre or a mood token with the music seeds. Affinity that comes only from a non-music person is dropped. This runs on the insight rows after the cache is read.",
+    why: "Each artist line names the token and the entity that kept or dropped it.",
     call: "rank_artists",
-    detail: `${artistInsights?.cached ? "Cached insights, then ranked. " : "Ranked after insights. "}${rankedArtists.report
-      .slice(0, 8)
-      .map((row) => `${row.name}: ${row.kept ? "kept" : "dropped"} via ${row.via}`)
-      .join("; ")}`,
-    result: rankedArtists.artists.map((artist) => artist.name).join(", ") || "none",
+    detail: `${artistSignalNote(found.seeds)} ${artistInsights?.cached ? "Cached insights, then ranked." : "Ranked after insights."}`,
+    result: artistLines || "none",
   });
   buckets.movies = mergeAffinity([...found.movies, ...buckets.movies]);
   buckets.books = mergeAffinity([...found.books, ...buckets.books]);
@@ -132,12 +151,12 @@ export async function assembleGraph(
       why:
         key === "places"
           ? `Which places sit next to ${seedNames}. Place results are limited to ${proposal.placeTags.join(", ") || "the place categories"}${proposal.city ? ` in ${proposal.city}` : ""}.`
-          : `Which ${key} sit next to ${seedNames}.`,
+          : artistSignalNote(found.seeds),
       call: "GET /v2/insights",
       detail:
         key === "places"
           ? `filter.type=${filterType}; filter.tags; signal.interests.entities${proposal.city ? "; filter.location.query" : ""}`
-          : `filter.type=${filterType}; signal.interests.entities`,
+          : `filter.type=${filterType}; signal.interests.entities=${artistIds.join(",") || "none"}`,
       result: buckets[key].map((entity) => entity.name).slice(0, 4).join(", ") || "no rows",
     });
   }
@@ -272,9 +291,9 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
   });
   if (droppedTags.length) {
     steps.push({
-      why: "These tag hits are not the mood of the prompt.",
+      why: "Extra hits for a tag that was kept, or a different name, were not sent as signals.",
       call: "reject_tags",
-      detail: proposal.rejectTags.slice(0, 4).join(", ") || "mood filter",
+      detail: proposal.rejectTags.slice(0, 4).join(", ") || "one tag per name",
       result: unique(droppedTags).slice(0, 8).join(", "),
     });
   }
@@ -343,6 +362,50 @@ function emptyBuckets() {
     books: [] as TasteEntity[],
     movies: [] as TasteEntity[],
   };
+}
+
+async function placeInsights(
+  client: TasteClient,
+  city: string,
+  entityIds: string[],
+  placeTagIds: string[],
+): Promise<{ entities: TasteEntity[]; tags: TasteTag[] } | null> {
+  const run = (tagIds: string[], location: string | undefined, timeoutMs: number) =>
+    client.insights({
+      filterType: "urn:entity:place",
+      entityIds,
+      tagIds,
+      filterTagIds: tagIds.length ? tagIds : undefined,
+      location,
+      take: 4,
+      timeoutMs,
+    });
+  try {
+    return await run(placeTagIds, city || undefined, 8_000);
+  } catch {
+    try {
+      return await run(placeTagIds.slice(0, 1), undefined, 4_000);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** Music seeds, plus the film or show so a series audience still returns. Never the person or the book. */
+export function artistSignalIds(seeds: TasteEntity[]): string[] {
+  const music = seeds.filter((seed) => seed.type.includes("artist"));
+  if (!music.length) return seeds.map((seed) => seed.id);
+  const works = seeds.filter((seed) => seed.type.includes("movie") || seed.type.includes("tv"));
+  return [...new Set([...music, ...works].map((seed) => seed.id))];
+}
+
+function artistSignalNote(seeds: TasteEntity[]): string {
+  const music = seeds.some((seed) => seed.type.includes("artist"));
+  if (!music) return "No music seed, so artist insights used every confirmed seed.";
+  const works = seeds.some((seed) => seed.type.includes("movie") || seed.type.includes("tv"));
+  return works
+    ? "Artist insights signaled the music seeds and the film or show, not the person."
+    : "Artist insights signaled the music seeds, not the person.";
 }
 
 function keyFor(filterType: InsightTarget): "artists" | "places" | "brands" | "books" | "movies" {

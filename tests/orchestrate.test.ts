@@ -50,6 +50,7 @@ describe("mock orchestrator", () => {
           .map((row) => row.id)
           .concat(result.graph.tags.map((tag) => tag.id)),
       );
+      if (result.atmosphere.room.eraLabel) allowed.add("prompt-era");
       for (const id of collectCitationIds(result.atmosphere)) {
         expect(allowed.has(id), `${prompt} cited missing id ${id}`).toBe(true);
       }

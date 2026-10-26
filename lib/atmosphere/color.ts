@@ -65,3 +65,15 @@ export function rgbToXy(r: number, g: number, b: number): [number, number] {
 function round(value: number): number {
   return Math.round(value * 10000) / 10000;
 }
+
+/** Mix two #rrggbb colors. Amount 0 stays on `base`; amount 1 is `toward`. */
+export function mixHex(base: string, toward: string, amount: number): string {
+  const [r1, g1, b1] = hexToRgb(base);
+  const [r2, g2, b2] = hexToRgb(toward);
+  const t = Math.max(0, Math.min(1, amount));
+  const channel = (from: number, to: number) =>
+    Math.round(from + (to - from) * t)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(r1, r2)}${channel(g1, g2)}${channel(b1, b2)}`;
+}

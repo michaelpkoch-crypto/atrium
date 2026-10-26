@@ -254,7 +254,7 @@ export const FIXTURES: Fixture[] = [
     "urn:entity:artist",
     ["mark mothersbaugh"],
     ["symmetry", "electronic"],
-    { [WES]: 0.8 },
+    { [WES]: 0.8, "mock:movie:budapest": 0.78 },
     0.63,
   ),
   row(

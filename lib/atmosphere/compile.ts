@@ -1,8 +1,9 @@
 import { hslToHex, hashString } from "@/lib/atmosphere/color";
 import { audienceLine } from "@/lib/atmosphere/baseline";
 import { pourFor } from "@/lib/atmosphere/drinks";
+import { eraChipLabel, eraCitation, gradeHex } from "@/lib/atmosphere/era";
 import { matchFamily, type Family, type LightBias, type PlanId, type ScaleName, type TextureKind, type WindowScene } from "@/lib/atmosphere/families";
-import { labelForScene, sceneFromPrompt, type SceneMood } from "@/lib/agent/propose";
+import { eraFromPrompt, labelForScene, sceneFromPrompt, type SceneMood } from "@/lib/agent/propose";
 import { PLANS, type ObjectKind, type ObjectRole, type ObjectSlot } from "@/lib/atmosphere/plans";
 import { atmosphereSchema, type Atmosphere, type Citation, type VisualMode } from "@/lib/atmosphere/schema";
 import type { TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
@@ -35,6 +36,7 @@ const TEXTURE_LABEL: Record<TextureKind, string> = {
   crowd: "Room murmur",
   air: "Room tone",
   steam: "Steam",
+  tape: "Tape hiss",
 };
 
 const NOISE: Record<TextureKind, number> = {
@@ -44,6 +46,7 @@ const NOISE: Record<TextureKind, number> = {
   crowd: 0.42,
   air: 0.12,
   steam: 0.38,
+  tape: 0.22,
 };
 
 const FILTER: Record<TextureKind, number> = {
@@ -53,6 +56,7 @@ const FILTER: Record<TextureKind, number> = {
   crowd: 640,
   air: 900,
   steam: 1100,
+  tape: 3400,
 };
 
 function dedupe(entities: TasteEntity[]): TasteEntity[] {
@@ -205,13 +209,16 @@ function signalDetail(signal: Signal, fixture: string): string {
   return `${signal.entity.name}${score} colors this ${fixture}.`;
 }
 
-function placeKind(entity: TasteEntity, fallback: ObjectKind): ObjectKind {
+/** A tub is a bathhouse. A restaurant, even in a Ghibli room, stays a table. */
+export function placeObjectKind(entity: { name: string; tags: { name: string }[] }, fallback: ObjectKind): ObjectKind {
+  const blob = `${entity.name} ${entity.tags.map((tag) => tag.name).join(" ")}`;
+  if (/\b(onsen|sento|bathhouse|bath house|hot spring|day spa)\b/i.test(blob)) return "tub";
+  if (/\b(bar|tavern|pub|lounge|cantina)\b/i.test(blob)) return "bar";
   const family = entity.tags.map((tag) => matchFamily(tag.name)?.id).find(Boolean);
-  if (family === "bath") return "tub";
   if (family === "concrete") return "plinth";
   if (family === "jazz" || family === "bar" || family === "disco") return "bar";
-  if (family === "pastel") return "table";
-  if (family === "cafe" || family === "rain" || family === "paper") return "table";
+  if (family === "pastel" || family === "cafe" || family === "rain" || family === "paper") return "table";
+  if (fallback === "tub") return "table";
   return fallback;
 }
 
@@ -225,7 +232,7 @@ function brandKind(entity: TasteEntity, fallback: ObjectKind): ObjectKind {
 }
 
 function kindFor(entity: TasteEntity, slot: ObjectSlot): ObjectKind {
-  if (slot.role === "place") return placeKind(entity, slot.kind);
+  if (slot.role === "place") return placeObjectKind(entity, slot.kind);
   if (slot.role === "brand") return brandKind(entity, slot.kind);
   if (slot.role === "book") return "book";
   if (slot.role === "artist" || entity.type.includes("artist")) return "record";
@@ -380,17 +387,27 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     });
   }
 
+  const era = eraFromPrompt(prompt);
   const lights = draft
     .sort((a, b) => b.weight - a.weight || a.light.id.localeCompare(b.light.id))
     .map((item) => item.light)
-    .slice(0, 8);
+    .slice(0, 8)
+    .map((light, index) => ({ ...light, color: gradeHex(light.color, era, index) }));
+  if (era?.decade === "1970s") {
+    const pendant = lights.find((light) => light.kind === "pendant");
+    if (pendant) pendant.kind = "globe";
+  }
 
   const heroHue = lead?.hue ?? hashString(anchor.id) % 360;
   const heroSat = lead?.sat ?? 40;
   const primary = lights[0].color;
   const secondary = lights[1]?.color ?? hslToHex((heroHue + 22) % 360, heroSat * 0.7, day ? 62 : 64);
   const accent = lights.find((light) => light.color !== primary)?.color ?? hslToHex((heroHue + 48) % 360, heroSat, 50);
-  const ambient = hslToHex(heroHue, heroSat * (day ? 0.28 : 0.42), day ? (window === "day-concrete" ? 58 : 78) : 13);
+  const ambient = gradeHex(
+    hslToHex(heroHue, heroSat * (day ? 0.28 : 0.42), day ? (window === "day-concrete" ? 58 : 78) : 13),
+    era,
+    3,
+  );
   const ink = day ? "#241c18" : "#f4efe6";
   const heroCitation = lights[0].citation;
 
@@ -479,6 +496,29 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       citation: cite(anchor, because, anchor.tags[0]?.name ?? null),
     });
   }
+  if (era?.decade === "1980s") {
+    const citation = eraCitation(era);
+    const crt = {
+      id: "object-era-crt",
+      kind: "crt" as const,
+      x: 180,
+      y: 470,
+      label: eraChipLabel(era).slice(0, 80),
+      citation,
+    };
+    if (objects.length < 6) objects.push(crt);
+    else objects[objects.length - 1] = crt;
+    if (objects.length < 6) {
+      objects.push({
+        id: "object-era-lava",
+        kind: "lava",
+        x: 1040,
+        y: 500,
+        label: "Lava lamp",
+        citation,
+      });
+    }
+  }
 
   const displayTag = displayEntity.tags[0]?.name ?? null;
   const displayKind = displayEntity.type.replace("urn:entity:", "").replace("urn:tag:", "tag");
@@ -503,6 +543,8 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
   let texture: TextureKind = textureSignal?.family?.texture ?? "air";
   if (scene.weather === "rain" && scene.time !== "day") texture = "rain";
   else if (scene.time === "day" && (texture === "rain" || texture === "steam")) texture = "air";
+  if (era?.decade === "1970s") texture = "vinyl";
+  if (era?.decade === "1980s") texture = "tape";
   const timed = signals.filter((signal) => signal.family);
   const tempo = timed.length
     ? clamp(
@@ -517,10 +559,11 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     ? cite(tempoSignal.entity, signalDetail(tempoSignal, "pulse"), tempoSignal.tag)
     : cite(anchor, `Tempo falls back to ${anchor.name}.`, null);
   if (tempoSignal) tempoCitation.affinity = tempoSignal.affinity;
-  const textureCitation = textureSignal
+  let textureCitation = textureSignal
     ? cite(textureSignal.entity, signalDetail(textureSignal, TEXTURE_LABEL[texture].toLowerCase()), textureSignal.tag)
     : tempoCitation;
-  if (textureSignal) textureCitation.affinity = textureSignal.affinity;
+  if (textureSignal && !era) textureCitation.affinity = textureSignal.affinity;
+  if (era) textureCitation = eraCitation(era);
 
   const root = ROOTS[hashString((artists[0] ?? anchor).id) % ROOTS.length];
   const frequencies = [round2(root / 2), ...RATIOS[scale].map((ratio) => round2(root * ratio))].slice(0, 6);
@@ -554,7 +597,9 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     const because =
       best.from === "place"
         ? `The tags on ${place.name} include “${best.key}”, so the counter pours ${best.name}.`
-        : `The prompt asks for ${best.key}, so the counter pours ${best.name}.`;
+        : best.key === "house"
+          ? `${place.name} is a venue, so the counter serves a house pour.`
+          : `The prompt asks for ${best.key}, so the counter pours ${best.name}.`;
     drinks.push({
       name: best.name,
       venue: place.name,
@@ -585,6 +630,8 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     citation: object.citation,
   }));
 
+  const heard = audienceLine(prompt, music) ?? audioDescription(texture, scale, tempo, textureCitation, tempoCitation);
+  const description = era ? `Era: ${era.label}, from the prompt. ${heard}` : heard;
   const artist = music.find((row) => !row.gap);
   const place = drinks.find((row) => !row.gap);
   const hero = lights[0];
@@ -641,7 +688,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       noise: NOISE[texture],
       filterHz: FILTER[texture],
       texture,
-      description: audienceLine(prompt, music) ?? audioDescription(texture, scale, tempo, textureCitation, tempoCitation),
+      description,
       citation: tempoCitation,
       layers: [
         { id: "pad", role: "pad", label: `${scale.replace("-", " ")} pad`, citation: tempoCitation },
@@ -653,6 +700,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       plan: planId,
       window,
       timeLabel: labelForScene(scene),
+      ...(era ? { eraLabel: era.label } : {}),
       windowBox: plan.windowBox,
       posterBox: plan.posterBox,
       lights,

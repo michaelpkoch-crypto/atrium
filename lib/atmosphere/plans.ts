@@ -1,6 +1,6 @@
 import type { LightBias, PlanId } from "@/lib/atmosphere/families";
 
-export type LightKind = "pendant" | "floor-lamp" | "table-lamp" | "sconce" | "string" | "led-strip" | "lantern" | "neon";
+export type LightKind = "pendant" | "floor-lamp" | "table-lamp" | "sconce" | "string" | "led-strip" | "lantern" | "neon" | "globe";
 export type ObjectKind =
   | "sofa"
   | "chair"
@@ -18,7 +18,9 @@ export type ObjectKind =
   | "bench"
   | "plinth"
   | "speaker"
-  | "textile";
+  | "textile"
+  | "crt"
+  | "lava";
 
 export type ObjectRole = "place" | "brand" | "book" | "artist" | "any";
 

@@ -36,6 +36,7 @@ export const lightKindSchema = z.enum([
   "led-strip",
   "lantern",
   "neon",
+  "globe",
 ]);
 export const objectKindSchema = z.enum([
   "sofa",
@@ -55,8 +56,10 @@ export const objectKindSchema = z.enum([
   "plinth",
   "speaker",
   "textile",
+  "crt",
+  "lava",
 ]);
-export const textureKindSchema = z.enum(["rain", "vinyl", "water", "crowd", "air", "steam"]);
+export const textureKindSchema = z.enum(["rain", "vinyl", "water", "crowd", "air", "steam", "tape"]);
 
 const boxSchema = z.object({
   x: z.number().min(0).max(1200),
@@ -91,6 +94,8 @@ export const roomSceneSchema = z.object({
   plan: planIdSchema,
   window: windowSceneSchema,
   timeLabel: z.string().min(1).max(40),
+  /** Year or decade taken from the prompt. Absent when the prompt names none. */
+  eraLabel: z.string().min(1).max(40).optional(),
   windowBox: boxSchema,
   posterBox: boxSchema,
   lights: z.array(roomLightSchema).min(2).max(8),

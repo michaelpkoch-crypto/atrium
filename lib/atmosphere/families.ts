@@ -8,7 +8,7 @@ import type { VisualMode } from "@/lib/atmosphere/schema";
 
 export type PlanId = "lounge" | "neon" | "rain" | "symmetry" | "bath" | "brutalist" | "living";
 export type WindowScene = "night-city" | "dusk" | "rain" | "day-pastel" | "day-concrete" | "neon-city";
-export type TextureKind = "rain" | "vinyl" | "water" | "crowd" | "air" | "steam";
+export type TextureKind = "rain" | "vinyl" | "water" | "crowd" | "air" | "steam" | "tape";
 export type LightBias = "neon" | "warm" | "cool" | "soft" | "lantern" | "line" | "open";
 export type ScaleName = "minor-pentatonic" | "dorian" | "lydian" | "phrygian" | "mixolydian";
 

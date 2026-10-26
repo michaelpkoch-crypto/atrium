@@ -47,6 +47,7 @@ export async function modelBaseline(prompt: string, llm: LlmConfig): Promise<Pla
     }
     const scene = knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt);
     return plainRoomFromModel({
+      prompt,
       model: llm.modelId,
       title: output.title?.trim() || "Plain reading",
       logline: output.logline?.trim() || "A generic room from the prompt, with no taste graph.",

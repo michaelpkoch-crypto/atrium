@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { assembleGraph } from "@/lib/agent/assemble";
+import { artistSignalIds, assembleGraph } from "@/lib/agent/assemble";
 import { compileFromPrompt } from "@/lib/agent/orchestrate";
 import { pourFor } from "@/lib/atmosphere/drinks";
+import { placeObjectKind } from "@/lib/atmosphere/compile";
+import { chipSwatch, chipText } from "@/components/room-canvas";
 import { rankInsightArtists } from "@/lib/agent/rank";
 import {
   broaderPlaceQueries,
@@ -12,10 +14,12 @@ import {
   isLandmark,
   chooseSignalTags,
   dedupeByName,
+  eraFromPrompt,
   knownProposal,
   placeFits,
   promptEchoPlace,
   rankCounterPlaces,
+  resolveProposal,
   roomKicker,
   sceneFromPrompt,
   tagAllowed,
@@ -152,6 +156,9 @@ describe("seed proposals for the sample prompts", () => {
     expect(pourFor("Fuji View Hotel", ["bathhouse", "tea"], "Studio Ghibli bathhouse at dusk")).toBeNull();
     expect(pourFor("Sleepy Hollow", ["diner"], "Tarantino road trip diner at 2am")).toBeNull();
     expect(pourFor("Beyond The Wall", ["tea"], "Bridgerton garden tea party")).toBeNull();
+    expect(pourFor("Los Cubiertos", ["restaurant"], "Studio Ghibli cozy kitchen")?.name).toBe("Hojicha");
+    expect(pourFor("Basement Tavern", ["bar"], "A Stranger Things basement in 1985")?.name).toBe("Cola");
+    expect(pourFor("Sanctum", ["place"], "a quiet kitchen")?.name).toBe("Tea");
     expect(broaderPlaceQueries(["diner"])).toEqual(expect.arrayContaining(["american diner", "roadside diner"]));
     expect(broaderPlaceQueries(["jazz bar"])).toEqual(expect.arrayContaining(["jazz club", "jazz lounge"]));
   });
@@ -234,6 +241,12 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.graph.tags.map((tag) => tag.name).join(" ")).not.toMatch(/Brutal death|brutal death/);
     expect(result.atmosphere.music.map((row) => row.name)).toContain("Vangelis");
     expect(result.atmosphere.room.plan).toBe("neon");
+    expect(result.atmosphere.room.eraLabel).toBe("1970s");
+    expect(result.atmosphere.room.lights.some((light) => light.kind === "globe")).toBe(true);
+    expect(result.atmosphere.audio.texture).toBe("vinyl");
+    expect(result.atmosphere.audio.description).toMatch(/^Era: 1970s, from the prompt\./);
+    expect(result.baseline.room.eraLabel).toBe("1970s");
+    expect(result.baseline.audio.texture).toBe("vinyl");
   });
 
   it("keeps Hisaishi and drops a film composer who shares no Ghibli tag", async () => {
@@ -251,9 +264,14 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.room.timeLabel).toBe("Night · rain");
     expect(result.baseline.room.timeLabel).toBe("Night · rain");
     const ranked = result.steps.find((step) => step.call === "rank_artists");
+    expect(ranked?.detail).toMatch(/music seeds, not the person/);
     expect(ranked?.detail).toMatch(/Ranked after insights/);
-    expect(ranked?.detail).toMatch(/Sezen Aksu: dropped via jazz from Haruki Murakami/);
-    expect(ranked?.result).toContain("Bill Evans");
+    expect(ranked?.result).toMatch(/Bill Evans: kept via seed/);
+    expect(ranked?.result).not.toMatch(/Sezen Aksu/);
+    const artistCall = result.trace.find((call) => call.path === "/v2/insights" && call.query["filter.type"] === "urn:entity:artist");
+    const placeCall = result.trace.find((call) => call.path === "/v2/insights" && call.query["filter.type"] === "urn:entity:place");
+    expect(artistCall?.query["signal.interests.entities"]).toBe("mock:artist:bill");
+    expect(placeCall?.query["signal.interests.entities"]).toContain("mock:person:haruki-murakami");
   });
 
   it("colors a Tarantino diner from neon, retro, and crime", async () => {
@@ -312,7 +330,7 @@ describe("mock rooms from canonical seeds", () => {
 });
 
 describe("place insight budget", () => {
-  it("waits 15 seconds for places and 6 seconds for artists", async () => {
+  it("waits 8 seconds for places and 6 seconds for artists", async () => {
     const calls: { filterType: string; timeoutMs?: number }[] = [];
     const pulp: TasteEntity = {
       id: "pulp",
@@ -345,8 +363,48 @@ describe("place insight budget", () => {
       knownProposal("Tarantino road trip diner at 2am")!,
       [],
     );
-    expect(calls.find((call) => call.filterType === "urn:entity:place")?.timeoutMs).toBe(15_000);
+    expect(calls.find((call) => call.filterType === "urn:entity:place")?.timeoutMs).toBe(8_000);
     expect(calls.find((call) => call.filterType === "urn:entity:artist")?.timeoutMs).toBe(6_000);
+  });
+
+  it("retries a timed-out place call with one tag and no location", async () => {
+    const calls: { filterType: string; timeoutMs?: number; location?: string; filterTagIds?: string[] }[] = [];
+    let placeAttempts = 0;
+    await assembleGraph(
+      {
+        mode: "mock",
+        trace: [],
+        async search() {
+          return [];
+        },
+        async searchTags(query: string) {
+          if (query === "brunch") return [{ id: "tag:brunch", name: "Brunch", type: "urn:tag" }];
+          if (query === "pastry") return [{ id: "tag:pastry", name: "Pastry", type: "urn:tag" }];
+          return [];
+        },
+        async insights(args) {
+          calls.push({
+            filterType: args.filterType,
+            timeoutMs: args.timeoutMs,
+            location: args.location,
+            filterTagIds: args.filterTagIds,
+          });
+          if (args.filterType === "urn:entity:place" && placeAttempts++ === 0) throw new Error("timeout");
+          return { entities: [], tags: [] };
+        },
+      },
+      "a Wes Anderson brunch",
+      { ...knownProposal("a Wes Anderson brunch")!, city: "Paris" },
+      [],
+    );
+    const places = calls.filter((call) => call.filterType === "urn:entity:place");
+    expect(places).toHaveLength(2);
+    expect(places[0]?.timeoutMs).toBe(8_000);
+    expect(places[0]?.location).toBe("Paris");
+    expect(places[0]?.filterTagIds?.length).toBeGreaterThan(1);
+    expect(places[1]?.timeoutMs).toBe(4_000);
+    expect(places[1]?.location).toBeUndefined();
+    expect(places[1]?.filterTagIds).toEqual(["tag:brunch"]);
   });
 });
 
@@ -411,7 +469,7 @@ describe("artist and counter filters", () => {
       kept: false,
       via: "jazz from Haruki Murakami, not a music seed",
     });
-    expect(ranked.report.find((row) => row.name === "Ahmad Jamal")?.via).toBe("jazz, piano (Bill Evans)");
+    expect(ranked.report.find((row) => row.name === "Ahmad Jamal")?.via).toBe("jazz from Bill Evans");
     expect(ranked.report.find((row) => row.name === "Erkin Gören")?.via).toBe("no shared genre");
   });
 
@@ -474,6 +532,11 @@ describe("artist and counter filters", () => {
     expect(roomKicker("Bridgerton garden tea party", "symmetry", "Tea Room Miami")).toBe("Tea party");
     expect(roomKicker("Tarantino road trip diner at 2am", "lounge", "Tom's Restaurant")).toBe("Diner");
     expect(roomKicker("reading Murakami on a rainy night", "rain", "Rain Window Kissaten")).toBe("Kissaten");
+    expect(roomKicker("A Stranger Things basement in 1985", "lounge")).toBe("Basement");
+    expect(resolveProposal("A Stranger Things basement in 1985", null).placeQueries).toEqual(["tavern", "basement bar"]);
+    expect(eraFromPrompt("Blade Runner meets a 1970s jazz bar")).toEqual({ label: "1970s", decade: "1970s" });
+    expect(eraFromPrompt("A Stranger Things basement in 1985")).toEqual({ label: "1985", decade: "1980s" });
+    expect(eraFromPrompt("reading Murakami on a rainy night")).toBeNull();
     const kitchen = knownProposal("Studio Ghibli cozy kitchen")!;
     expect(kitchen.placeQueries).toEqual(["cafe", "tea house", "coffee shop"]);
     expect(kitchen.placeQueries.join(" ")).not.toMatch(/onsen|sento/);
@@ -498,6 +561,31 @@ describe("artist and counter filters", () => {
     );
     expect(counters.map((row) => row.name)).not.toContain("American Diner");
     expect(counters.map((row) => row.name)).toEqual(expect.arrayContaining(["American Diner Dulwich", "Tom's Restaurant"]));
+    const kitchen = knownProposal("Studio Ghibli cozy kitchen")!;
+    const poured = rankCounterPlaces(
+      [
+        place("Los Cubiertos", ["restaurant"]),
+        place("Restaurante Los Pajaritos", ["restaurant"]),
+        place("Sanctum", ["place"]),
+        place("Igreja de Santa Luzia", ["restaurant"]),
+      ].map((row, index) => ({ ...row, affinity: 0.9 - index * 0.05 })),
+      kitchen,
+    );
+    expect(poured.map((row) => row.name)[0]).toBe("Los Cubiertos");
+    expect(poured.map((row) => row.name)).not.toContain("Igreja de Santa Luzia");
+    expect(poured.map((row) => row.name)).not.toContain("Sanctum");
+    expect(rankCounterPlaces([place("Sanctum", ["place"])], kitchen).map((row) => row.name)).toEqual(["Sanctum"]);
+    expect(placeObjectKind({ name: "Los Cubiertos", tags: [{ name: "Restaurant" }, { name: "Anime" }] }, "tub")).toBe("table");
+    expect(placeObjectKind({ name: "Bathhouse Tea Counter", tags: [{ name: "Bathhouse" }] }, "tub")).toBe("tub");
+    expect(placeObjectKind({ name: "Basement Tavern", tags: [{ name: "Bar" }] }, "tub")).toBe("bar");
+    expect(chipText("The atmosphere is tense and amber")).toBe("The atmosphere is");
+    expect(chipText("Era: 1985, from the prompt")).toBe("Era: 1985, from the prompt");
+    expect(chipSwatch("#3a2a22", "#e6d3b3")).not.toBe("#3a2a22");
+    const bill = artist("Bill Evans", ["Jazz"], 0.7);
+    const person = artist("Haruki Murakami", ["Literature"], 0.9, [], "urn:entity:person");
+    const show = artist("Bridgerton", ["Regency"], 0.9, [], "urn:entity:tv_show");
+    expect(artistSignalIds([bill, person])).toEqual([bill.id]);
+    expect(artistSignalIds([bill, person, show])).toEqual([bill.id, show.id]);
   });
 
   it("keeps one tag when a query returns Jazz three times", () => {
@@ -512,6 +600,20 @@ describe("artist and counter filters", () => {
       proposal,
     );
     expect(chosen.tags.map((tag) => tag.name)).toEqual(["Jazz", "Rain"]);
+    expect(chosen.dropped).not.toContain("Jazz");
+    const duplicated = chooseSignalTags(
+      [
+        ...[
+          { query: "jazz", tag: { id: "1", name: "Jazz", type: "urn:tag" } },
+          { query: "jazz", tag: { id: "9", name: "Jazz", type: "urn:tag" } },
+          { query: "literature", tag: { id: "5", name: "Literature", type: "urn:tag" } },
+        ],
+      ],
+      proposal,
+    );
+    expect(duplicated.tags.map((tag) => tag.name)).toEqual(expect.arrayContaining(["Jazz", "Literature"]));
+    expect(duplicated.dropped).not.toContain("Jazz");
+    expect(duplicated.dropped).not.toContain("Literature");
   });
 
   it("collapses repeated tag names in a seed", () => {

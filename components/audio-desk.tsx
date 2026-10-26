@@ -99,6 +99,10 @@ class RoomTone {
       drops.connect(gain.gain);
       drops.start();
       this.nodes.push(drops);
+    } else if (kind === "tape") {
+      filter.type = "highpass";
+      filter.frequency.value = Math.max(2800, filterHz);
+      gain.gain.value = 0.02 + amount * 0.05;
     } else if (kind === "vinyl") {
       filter.type = "bandpass";
       filter.frequency.value = 2200;

@@ -1,5 +1,6 @@
-import { knownProposal, labelForScene, sceneFromPrompt, windowForScene } from "@/lib/agent/propose";
+import { eraFromPrompt, knownProposal, labelForScene, sceneFromPrompt, windowForScene, type Era } from "@/lib/agent/propose";
 import { hashString, hslToHex } from "@/lib/atmosphere/color";
+import { eraChipLabel, eraCitation, gradeHex } from "@/lib/atmosphere/era";
 import { PLANS, type ObjectKind } from "@/lib/atmosphere/plans";
 import { roomSceneSchema, type Atmosphere, type Citation, type RoomScene } from "@/lib/atmosphere/schema";
 import type { PlanId, TextureKind, WindowScene } from "@/lib/atmosphere/families";
@@ -248,6 +249,7 @@ export function sceneFromPlain(args: {
   objects: { kind: ObjectKind; label: string }[];
   assumptions: string[];
   timeLabel?: string;
+  era?: Era | null;
 }): RoomScene {
   const plan = PLANS[args.plan];
   const day = args.window === "day-pastel" || args.window === "day-concrete";
@@ -261,7 +263,7 @@ export function sceneFromPlain(args: {
       x: slot.x,
       y: slot.y,
       x2: slot.x2,
-      color: namedColor(args.colors[index % args.colors.length] ?? "#c4a574", index),
+      color: gradeHex(namedColor(args.colors[index % args.colors.length] ?? "#c4a574", index), args.era ?? null, index),
       intensity: 0.72,
       flicker: slot.kind === "neon" ? 0.7 : 0.08,
       label: assumption.slice(0, 80),
@@ -279,6 +281,33 @@ export function sceneFromPlain(args: {
       citation: baselineCitation(object.label, "Plain reading. This object was not chosen from a Qloo entity.", 20 + index),
     };
   });
+  if (args.era?.decade === "1970s") {
+    const pendant = lights.find((light) => light.kind === "pendant");
+    if (pendant) pendant.kind = "globe";
+  }
+  if (args.era?.decade === "1980s") {
+    const citation = eraCitation(args.era);
+    if (objects.length < 6) {
+      objects.push({
+        id: "plain-object-era-crt",
+        kind: "crt",
+        x: 180,
+        y: 470,
+        label: eraChipLabel(args.era).slice(0, 80),
+        citation,
+      });
+    }
+    if (objects.length < 6) {
+      objects.push({
+        id: "plain-object-era-lava",
+        kind: "lava",
+        x: 1040,
+        y: 470,
+        label: "Lava lamp",
+        citation,
+      });
+    }
+  }
   while (objects.length < 2) {
     const slot = plan.objects[objects.length];
     objects.push({
@@ -294,6 +323,7 @@ export function sceneFromPlain(args: {
     plan: args.plan,
     window: args.window,
     timeLabel,
+    ...(args.era ? { eraLabel: args.era.label } : {}),
     windowBox: plan.windowBox,
     posterBox: plan.posterBox,
     lights,
@@ -333,6 +363,8 @@ export function stereotypeBaseline(prompt: string, note?: string): PlainRoom {
   const pack = pickPack(prompt);
   const scene = knownProposal(prompt)?.scene ?? sceneFromPrompt(prompt);
   const window = windowForScene(scene);
+  const era = eraFromPrompt(prompt);
+  const texture = era?.decade === "1970s" ? "vinyl" : era?.decade === "1980s" ? "tape" : pack.texture;
   const room = sceneFromPlain({
     plan: pack.plan,
     window,
@@ -343,6 +375,7 @@ export function stereotypeBaseline(prompt: string, note?: string): PlainRoom {
     colors: pack.colors,
     objects: pack.objects,
     assumptions: pack.assumptions,
+    era,
   });
   return {
     source: "stereotype",
@@ -356,8 +389,8 @@ export function stereotypeBaseline(prompt: string, note?: string): PlainRoom {
     room,
     audio: {
       tempoBpm: pack.tempo,
-      texture: pack.texture,
-      description: `${pack.texture} bed at ${pack.tempo} BPM, invented from the prompt with no Qloo artist.`,
+      texture,
+      description: `${era ? `Era: ${era.label}, from the prompt. ` : ""}${texture} bed at ${pack.tempo} BPM, invented from the prompt with no Qloo artist.`,
     },
   };
 }
@@ -372,6 +405,7 @@ const WINDOW_PLAN: Record<WindowScene, PlanId> = {
 };
 
 export function plainRoomFromModel(args: {
+  prompt?: string;
   model: string;
   title: string;
   logline: string;
@@ -391,6 +425,8 @@ export function plainRoomFromModel(args: {
     .filter((item) => item.label)
     .slice(0, 4);
   while (objects.length < 2) objects.push({ kind: "table", label: "Generic object" });
+  const era = args.prompt ? eraFromPrompt(args.prompt) : null;
+  const texture = era?.decade === "1970s" ? "vinyl" : era?.decade === "1980s" ? "tape" : args.texture;
   const room = sceneFromPlain({
     plan: WINDOW_PLAN[args.window],
     window: args.window,
@@ -401,6 +437,7 @@ export function plainRoomFromModel(args: {
     objects,
     assumptions: safeAssumptions,
     timeLabel: args.timeLabel,
+    era,
   });
   const tempo = Math.max(48, Math.min(140, Math.round(args.tempoBpm) || 80));
   return {
@@ -415,8 +452,8 @@ export function plainRoomFromModel(args: {
     room,
     audio: {
       tempoBpm: tempo,
-      texture: args.texture,
-      description: `${args.texture} bed at ${tempo} BPM, written by the model with no Qloo artist.`,
+      texture,
+      description: `${era ? `Era: ${era.label}, from the prompt. ` : ""}${texture} bed at ${tempo} BPM, written by the model with no Qloo artist.`,
     },
   };
 }

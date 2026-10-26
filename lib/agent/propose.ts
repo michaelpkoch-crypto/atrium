@@ -135,6 +135,7 @@ const STATED_ROOMS: { test: RegExp; room: StatedRoom }[] = [
   { test: /\bkitchen\b/i, room: { label: "Kitchen", queries: ["cafe", "tea house", "coffee shop"], tags: ["cafe", "tea", "kitchen"] } },
   { test: /\bdiner\b/i, room: { label: "Diner", queries: ["diner", "american diner"], tags: ["diner"] } },
   { test: /\b(jazz bar|jazz club|jazz lounge)\b/i, room: { label: "Bar", queries: ["jazz bar", "jazz club"], tags: ["jazz", "bar"] } },
+  { test: /\bbasement\b/i, room: { label: "Basement", queries: ["tavern", "basement bar"], tags: ["bar", "tavern"] } },
   { test: /\bbar\b/i, room: { label: "Bar", queries: ["bar", "jazz bar"], tags: ["bar", "jazz"] } },
   { test: /\b(reading nook|nook)\b/i, room: { label: "Reading nook", queries: ["cafe", "kissaten"], tags: ["cafe", "kissaten"] } },
   { test: /\b(brunch|patisserie|pastry)\b/i, room: { label: "Café", queries: ["patisserie", "brunch cafe"], tags: ["cafe", "brunch", "pastry"] } },
@@ -251,11 +252,32 @@ export function resolveScene(prompt: string, model: SceneMood | null): SceneMood
  * For a sample prompt the canonical names win. The model can still add moods
  * and rejections. For anything else, the model's proposal is the search list.
  */
+export type Era = { label: string; decade: "1970s" | "1980s" };
+
+/** A year or a decade the prompt states. This is not a Qloo tag. */
+export function eraFromPrompt(prompt: string): Era | null {
+  const year = prompt.match(/\b(19[78]\d)\b/);
+  if (year) {
+    const value = Number(year[1]);
+    if (value >= 1970 && value <= 1979) return { label: year[1], decade: "1970s" };
+    if (value >= 1980 && value <= 1989) return { label: year[1], decade: "1980s" };
+  }
+  if (/\b(1970s|70s|seventies)\b/i.test(prompt)) return { label: "1970s", decade: "1970s" };
+  if (/\b(1980s|80s|eighties)\b/i.test(prompt)) return { label: "1980s", decade: "1980s" };
+  return null;
+}
+
 export function resolveProposal(prompt: string, model: Proposal | null): Proposal {
   const known = knownProposal(prompt);
   if (!known) {
     const base = clampProposal(model ?? genericProposal(prompt));
-    return { ...base, scene: resolveScene(prompt, model?.scene ?? null) };
+    const room = statedRoom(prompt);
+    return {
+      ...base,
+      placeQueries: room?.queries ?? base.placeQueries,
+      placeTags: room?.tags ?? base.placeTags,
+      scene: resolveScene(prompt, model?.scene ?? null),
+    };
   }
   if (!model) return known;
   const rejectTags = unique([...known.rejectTags, ...model.rejectTags.map(clean)]).slice(0, 8);
@@ -405,10 +427,12 @@ export function bareCategoryPlace(name: string): boolean {
   return parts.length > 0 && parts.length <= 2 && parts.every((token) => BARE_CATEGORY.has(token));
 }
 
+const POURER =
+  /\b(restaurantes?|restaurants?|cafes?|coffee|bars?|taverns?|cantinas?|bistros?|diners?|pubs?|lounges?|kitchens?|eateries|grills?)\b/i;
+
 function counterScore(place: TasteEntity, services: Service[]): number {
   if (counterRejected(place.name)) return -1;
   if (!services.includes("bath") && /\b(onsen|sento|bathhouse|bath house|day spa|hot spring)\b/i.test(fold(place.name))) return -1;
-  if (!services.length) return 1;
   const name = fold(place.name);
   const tags = fold(place.tags.map((tag) => humanizeTagName(tag.name)).join(" "));
   let score = 0;
@@ -416,23 +440,24 @@ function counterScore(place: TasteEntity, services: Service[]): number {
     if (SERVICE_NAME[service].test(name)) score += 5;
     else if (SERVICE_TAG[service].test(tags)) score += 2;
   }
-  return score;
+  if (score > 0) return score;
+  if (!services.length || POURER.test(name) || POURER.test(tags)) return 1;
+  return 0;
 }
 
 /**
  * The counter is the place that can actually serve the prompt.
  * A diner name outranks a landmark that merely carried the diner tag.
- * Score 0 is dropped: fewer venues, not a church.
+ * When nothing matches the room category, the best non-excluded venue still pours.
+ * A church, a hotel, or an unwanted onsen stays at -1 and is left out.
  */
 export function rankCounterPlaces(places: TasteEntity[], proposal: Proposal): TasteEntity[] {
   const services = wantedServices(proposal);
-  const ranked = places
-    .map((place) => ({ place, score: counterScore(place, services) }))
-    .filter((row) => row.score > 0)
-    .sort(
-      (a, b) =>
-        b.score - a.score || (b.place.affinity ?? -1) - (a.place.affinity ?? -1) || a.place.name.localeCompare(b.place.name),
-    );
+  const scored = places.map((place) => ({ place, score: counterScore(place, services) }));
+  const positive = scored.filter((row) => row.score > 0);
+  const ranked = (positive.length ? positive : scored.filter((row) => row.score >= 0)).sort(
+    (a, b) => b.score - a.score || (b.place.affinity ?? -1) - (a.place.affinity ?? -1) || a.place.name.localeCompare(b.place.name),
+  );
   const unique = dedupeByName(ranked.map((row) => row.place));
   const specific = unique.filter((place) => !bareCategoryPlace(place.name));
   return specific.length ? specific : unique;
@@ -617,7 +642,8 @@ export function chooseSignalTags(rows: { tag: TasteTag; query: string }[], propo
     }
     if (picked.length >= 4) break;
   }
-  return { tags: picked, dropped };
+  const keptNames = new Set(picked.map((tag) => fold(tag.name).toLowerCase()));
+  return { tags: picked, dropped: dropped.filter((name) => !keptNames.has(fold(name).toLowerCase())) };
 }
 
 function moodMatch(tagName: string, mood: string): boolean {

@@ -13,12 +13,10 @@ const RULES: { test: RegExp; name: string; key: string }[] = [
   { test: /\bcafe\b|coffee|espresso/, name: "Filter coffee", key: "cafe" },
 ];
 
-const CAN_SERVE =
-  /\b(diner|eatery|grill|restaurant|bistro|cafe|coffee|espresso|kissaten|kissa|bar|pub|lounge|tea\s*room|tearoom|tea\s*house|teahouse|bathhouse|onsen|sento|patisserie|bakery|pastry|brunch)\b/i;
-
 /**
- * The pour comes from the place. The prompt fills in only when that place is a venue
- * that can serve a drink. A church or a hotel does not pour Earl Grey.
+ * The pour comes from the place when its name or tags name a drink.
+ * Otherwise the prompt picks one: a kitchen is tea or hojicha, a 1980s basement is cola.
+ * Any place that is not a church, hotel, landmark, or fiction set still pours.
  */
 export function pourFor(
   placeName: string,
@@ -29,9 +27,21 @@ export function pourFor(
   const blob = `${placeName} ${tagNames.join(" ")}`;
   const fromPlace = match(blob);
   if (fromPlace) return { ...fromPlace, from: "place" };
-  if (!CAN_SERVE.test(blob)) return null;
-  const fromPrompt = match(prompt);
-  return fromPrompt ? { ...fromPrompt, from: "prompt" } : null;
+  const prompted = promptDrink(prompt) ?? match(prompt);
+  if (prompted) return { ...prompted, from: "prompt" };
+  return { name: "House pour", key: "house", from: "prompt" };
+}
+
+function promptDrink(prompt: string): { name: string; key: string } | null {
+  const text = prompt.toLowerCase();
+  if (/\bkitchen\b/.test(text)) {
+    if (/ghibli|hisaishi|spirited|miyazaki|totoro/.test(text)) return { name: "Hojicha", key: "kitchen" };
+    return { name: "Tea", key: "kitchen" };
+  }
+  if (/\bbasement\b/.test(text) || /\b198\d\b/.test(text) || /\b(1980s|80s|eighties)\b/.test(text)) {
+    return { name: "Cola", key: "soda" };
+  }
+  return null;
 }
 
 function match(text: string): { name: string; key: string } | null {
