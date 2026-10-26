@@ -11,6 +11,9 @@ const RULES: { test: RegExp; name: string; key: string }[] = [
   { test: /cocktail|sky bar|martini|rooftop/, name: "Gin martini", key: "cocktail" },
   { test: /\btea\b/, name: "Earl Grey", key: "tea" },
   { test: /\bcafe\b|coffee|espresso/, name: "Filter coffee", key: "cafe" },
+  { test: /\b(mead|hobbit)\b/, name: "Mead", key: "mead" },
+  { test: /\b(tavern|taberna|alehouse|pub|\bale\b)/, name: "Ale", key: "ale" },
+  { test: /\b(bodega|wine bar|vinoteca|wine)\b/, name: "Red wine", key: "wine" },
 ];
 
 /**
@@ -24,16 +27,21 @@ export function pourFor(
   prompt: string,
 ): { name: string; key: string; from: "place" | "prompt" } | null {
   if (counterRejected(placeName)) return null;
+  const prompted = promptDrink(prompt);
+  if (prompted) return { ...prompted, from: "prompt" };
   const blob = `${placeName} ${tagNames.join(" ")}`;
   const fromPlace = match(blob);
   if (fromPlace) return { ...fromPlace, from: "place" };
-  const prompted = promptDrink(prompt) ?? match(prompt);
-  if (prompted) return { ...prompted, from: "prompt" };
+  const fromPrompt = match(prompt);
+  if (fromPrompt) return { ...fromPrompt, from: "prompt" };
   return { name: "House pour", key: "house", from: "prompt" };
 }
 
 function promptDrink(prompt: string): { name: string; key: string } | null {
   const text = prompt.toLowerCase();
+  if (/\b(mead|lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien)\b/.test(text)) {
+    return { name: "Mead", key: "mead" };
+  }
   if (/\bkitchen\b/.test(text)) {
     if (/ghibli|hisaishi|spirited|miyazaki|totoro/.test(text)) return { name: "Hojicha", key: "kitchen" };
     return { name: "Tea", key: "kitchen" };
@@ -41,6 +49,7 @@ function promptDrink(prompt: string): { name: string; key: string } | null {
   if (/\bbasement\b/.test(text) || /\b198\d\b/.test(text) || /\b(1980s|80s|eighties)\b/.test(text)) {
     return { name: "Cola", key: "soda" };
   }
+  if (/\b(tavern|taberna|alehouse)\b/.test(text)) return { name: "Ale", key: "ale" };
   return null;
 }
 

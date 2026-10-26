@@ -58,6 +58,14 @@ export const objectKindSchema = z.enum([
   "textile",
   "crt",
   "lava",
+  "jukebox",
+  "booth",
+  "umbrella",
+  "sprite",
+  "console",
+  "shelf",
+  "rug",
+  "teapot",
 ]);
 export const textureKindSchema = z.enum(["rain", "vinyl", "water", "crowd", "air", "steam", "tape"]);
 
@@ -99,7 +107,7 @@ export const roomSceneSchema = z.object({
   windowBox: boxSchema,
   posterBox: boxSchema,
   lights: z.array(roomLightSchema).min(2).max(8),
-  objects: z.array(roomObjectSchema).min(2).max(6),
+  objects: z.array(roomObjectSchema).min(2).max(8),
   display: z.object({
     kicker: z.string().min(1).max(80),
     title: z.string().min(1).max(80),

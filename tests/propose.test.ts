@@ -16,11 +16,13 @@ import {
   dedupeByName,
   eraFromPrompt,
   knownProposal,
+  placeCity,
   placeFits,
   promptEchoPlace,
   rankCounterPlaces,
   resolveProposal,
   roomKicker,
+  sanitizeCity,
   sceneFromPrompt,
   tagAllowed,
   tagFitsMood,
@@ -159,6 +161,10 @@ describe("seed proposals for the sample prompts", () => {
     expect(pourFor("Los Cubiertos", ["restaurant"], "Studio Ghibli cozy kitchen")?.name).toBe("Hojicha");
     expect(pourFor("Basement Tavern", ["bar"], "A Stranger Things basement in 1985")?.name).toBe("Cola");
     expect(pourFor("Sanctum", ["place"], "a quiet kitchen")?.name).toBe("Tea");
+    expect(pourFor("Taberna Tempranillo", ["wine", "tavern"], "a Lord of the Rings tavern")?.name).toBe("Mead");
+    expect(pourFor("The Green Dragon", ["pub"], "a neighborhood tavern")?.name).toBe("Ale");
+    expect(pourFor("Casa Montaña", ["bodega", "wine"], "an evening out")?.name).toBe("Red wine");
+    expect(pourFor("Some Room", ["venue"], "an evening out")?.name).toBe("House pour");
     expect(broaderPlaceQueries(["diner"])).toEqual(expect.arrayContaining(["american diner", "roadside diner"]));
     expect(broaderPlaceQueries(["jazz bar"])).toEqual(expect.arrayContaining(["jazz club", "jazz lounge"]));
   });
@@ -242,7 +248,15 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.music.map((row) => row.name)).toContain("Vangelis");
     expect(result.atmosphere.room.plan).toBe("neon");
     expect(result.atmosphere.room.eraLabel).toBe("1970s");
-    expect(result.atmosphere.room.lights.some((light) => light.kind === "globe")).toBe(true);
+    expect(result.atmosphere.palette.ambient).toBe("#8a5a32");
+    expect(result.baseline.palette.ambient).toBe("#8a5a32");
+    const globe = result.atmosphere.room.lights.find((light) => light.kind === "globe");
+    expect(globe).toBeTruthy();
+    expect(globe?.y).toBeLessThanOrEqual(150);
+    expect(result.atmosphere.room.objects.some((object) => object.kind === "rug")).toBe(true);
+    expect(result.atmosphere.room.objects.some((object) => object.kind === "bar")).toBe(true);
+    expect(result.atmosphere.room.objects.some((object) => object.kind === "record" || object.kind === "speaker")).toBe(true);
+    expect(result.atmosphere.room.objects.some((object) => object.kind === "shelf")).toBe(true);
     expect(result.atmosphere.audio.texture).toBe("vinyl");
     expect(result.atmosphere.audio.description).toMatch(/^Era: 1970s, from the prompt\./);
     expect(result.baseline.room.eraLabel).toBe("1970s");
@@ -363,8 +377,8 @@ describe("place insight budget", () => {
       knownProposal("Tarantino road trip diner at 2am")!,
       [],
     );
-    expect(calls.find((call) => call.filterType === "urn:entity:place")?.timeoutMs).toBe(8_000);
-    expect(calls.find((call) => call.filterType === "urn:entity:artist")?.timeoutMs).toBe(6_000);
+    expect(calls.find((call) => call.filterType === "urn:entity:place")?.timeoutMs).toBe(5_000);
+    expect(calls.find((call) => call.filterType === "urn:entity:artist")?.timeoutMs).toBe(5_000);
   });
 
   it("retries a timed-out place call with one tag and no location", async () => {
@@ -399,10 +413,10 @@ describe("place insight budget", () => {
     );
     const places = calls.filter((call) => call.filterType === "urn:entity:place");
     expect(places).toHaveLength(2);
-    expect(places[0]?.timeoutMs).toBe(8_000);
+    expect(places[0]?.timeoutMs).toBe(5_000);
     expect(places[0]?.location).toBe("Paris");
     expect(places[0]?.filterTagIds?.length).toBeGreaterThan(1);
-    expect(places[1]?.timeoutMs).toBe(4_000);
+    expect(places[1]?.timeoutMs).toBe(2_000);
     expect(places[1]?.location).toBeUndefined();
     expect(places[1]?.filterTagIds).toEqual(["tag:brunch"]);
   });
@@ -470,6 +484,13 @@ describe("artist and counter filters", () => {
       via: "jazz from Haruki Murakami, not a music seed",
     });
     expect(ranked.report.find((row) => row.name === "Ahmad Jamal")?.via).toBe("jazz from Bill Evans");
+    const opaque = rankInsightArtists(
+      [artist("Ahmad Jamal", ["Jazz", "Piano"], 0.7, [{ id: bill.id, name: "EE57C132-AAAA-BBBB-CCCC-DDDDEEEEFFFF", score: 0.7 }])],
+      [bill],
+      proposal,
+      "reading Murakami on a rainy night",
+    );
+    expect(opaque.report.find((row) => row.name === "Ahmad Jamal")?.via).toBe("jazz from Bill Evans");
     expect(ranked.report.find((row) => row.name === "Erkin Gören")?.via).toBe("no shared genre");
   });
 
@@ -524,6 +545,14 @@ describe("artist and counter filters", () => {
       tea,
     );
     expect(rooms.map((row) => row.name)).toEqual(["Tea Room Miami"]);
+    const rankedTea = rankCounterPlaces(
+      [
+        { ...place("Sky Garden", ["cocktail", "bar", "nightlife"]), affinity: 0.92 },
+        { ...place("Tea Room - Siena", ["tea", "tea room"]), affinity: 0.4 },
+      ],
+      tea,
+    );
+    expect(rankedTea[0]?.name).toBe("Tea Room - Siena");
   });
 
   it("titles the room from the prompt and prefers a kitchen counter to an onsen", () => {
@@ -533,7 +562,15 @@ describe("artist and counter filters", () => {
     expect(roomKicker("Tarantino road trip diner at 2am", "lounge", "Tom's Restaurant")).toBe("Diner");
     expect(roomKicker("reading Murakami on a rainy night", "rain", "Rain Window Kissaten")).toBe("Kissaten");
     expect(roomKicker("A Stranger Things basement in 1985", "lounge")).toBe("Basement");
+    expect(roomKicker("a Lord of the Rings tavern", "lounge")).toBe("Tavern");
     expect(resolveProposal("A Stranger Things basement in 1985", null).placeQueries).toEqual(["tavern", "basement bar"]);
+    expect(resolveProposal("A Stranger Things basement in 1985", null).city).toBe("Atlanta");
+    expect(resolveProposal("a Lord of the Rings tavern", null).city).toBe("Oxford");
+    expect(placeCity("Tarantino road trip diner at 2am")).toBe("Los Angeles");
+    expect(placeCity("a quiet kitchen")).toBeNull();
+    expect(sanitizeCity("a Wes Anderson brunch", "Madrid")).toBe("");
+    expect(sanitizeCity("a weekend in Madrid", "Madrid")).toBe("Madrid");
+    expect(knownProposal("Blade Runner meets a 1970s jazz bar")?.city).toBe("Los Angeles");
     expect(eraFromPrompt("Blade Runner meets a 1970s jazz bar")).toEqual({ label: "1970s", decade: "1970s" });
     expect(eraFromPrompt("A Stranger Things basement in 1985")).toEqual({ label: "1985", decade: "1980s" });
     expect(eraFromPrompt("reading Murakami on a rainy night")).toBeNull();

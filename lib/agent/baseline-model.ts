@@ -73,7 +73,7 @@ async function askPlain(prompt: string, llm: LlmConfig, secrets: string[]): Prom
       model: modelFor(llm),
       temperature: 0.4,
       maxOutputTokens: 700,
-      abortSignal: AbortSignal.timeout(12_000),
+      abortSignal: AbortSignal.timeout(5_500),
       system: PLAIN_RULES,
       prompt,
       output: Output.object({
@@ -93,7 +93,7 @@ async function askPlain(prompt: string, llm: LlmConfig, secrets: string[]): Prom
       model: modelFor(llm),
       temperature: 0.3,
       maxOutputTokens: 500,
-      abortSignal: AbortSignal.timeout(12_000),
+      abortSignal: AbortSignal.timeout(2_000),
       system: JSON_RULES,
       prompt,
     });

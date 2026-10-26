@@ -236,14 +236,28 @@ function attribute(
   if (!explained.length) return { keep: true, via: `${token} from the music seeds` };
   const top = explained[0].score;
   const music = explained.filter((row) => musicIds.has(row.id) && row.score >= top - 0.05);
-  if (music.length) return { keep: true, via: `${token} from ${music[0].name}` };
+  if (music.length) return { keep: true, via: `${token} from ${explainerName(music[0], seeds)}` };
   const people = explained.filter((row) => personIds.has(row.id) && row.score >= top - 0.05);
   if (people.length) {
     const matched = people.find((person) => overlap.some((item) => personTokens.get(person.id)?.has(item)));
-    if (matched) return { keep: true, via: `${token} from ${matched.name}` };
-    return { keep: false, via: `${token} from ${people[0].name}, not a music seed` };
+    if (matched) return { keep: true, via: `${token} from ${explainerName(matched, seeds)}` };
+    return { keep: false, via: `${token} from ${explainerName(people[0], seeds)}, not a music seed` };
   }
-  return { keep: true, via: `${token} from ${explained[0].name}` };
+  return { keep: true, via: `${token} from ${explainerName(explained[0], seeds)}` };
+}
+
+/** Live explainers often name the seed with its UUID. The seed list has the title. */
+function explainerName(row: { id: string; name: string }, seeds: TasteEntity[]): string {
+  const seed = seeds.find((item) => item.id === row.id);
+  if (seed && !opaqueId(seed.name)) return seed.name;
+  if (!opaqueId(row.name)) return row.name;
+  return "the music seed";
+}
+
+function opaqueId(value: string): boolean {
+  const text = value.trim();
+  if (/\s/.test(text)) return false;
+  return /^[0-9a-f-]{8,}$/i.test(text) && /\d/.test(text);
 }
 
 function countableTokens(entity: TasteEntity): string[] {

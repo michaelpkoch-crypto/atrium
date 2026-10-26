@@ -1,9 +1,9 @@
 import { hslToHex, hashString } from "@/lib/atmosphere/color";
 import { audienceLine } from "@/lib/atmosphere/baseline";
 import { pourFor } from "@/lib/atmosphere/drinks";
-import { eraChipLabel, eraCitation, gradeHex } from "@/lib/atmosphere/era";
+import { eraAmbient, eraChipLabel, eraCitation, forceGlobe, gradeHex } from "@/lib/atmosphere/era";
 import { matchFamily, type Family, type LightBias, type PlanId, type ScaleName, type TextureKind, type WindowScene } from "@/lib/atmosphere/families";
-import { eraFromPrompt, labelForScene, sceneFromPrompt, type SceneMood } from "@/lib/agent/propose";
+import { eraFromPrompt, labelForScene, sceneFromPrompt, type Era, type SceneMood } from "@/lib/agent/propose";
 import { PLANS, type ObjectKind, type ObjectRole, type ObjectSlot } from "@/lib/atmosphere/plans";
 import { atmosphereSchema, type Atmosphere, type Citation, type VisualMode } from "@/lib/atmosphere/schema";
 import type { TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
@@ -258,6 +258,24 @@ function overlaps(a: string, b: string): boolean {
   return left === right || left.includes(right) || right.includes(left);
 }
 
+const MAX_OBJECTS = 8;
+
+const FURNITURE: Record<string, { x: number; y: number }> = {
+  rug: { x: 640, y: 688 },
+  teapot: { x: 860, y: 500 },
+  bottle: { x: 900, y: 505 },
+  record: { x: 230, y: 530 },
+  shelf: { x: 430, y: 430 },
+  umbrella: { x: 1040, y: 545 },
+  sprite: { x: 980, y: 560 },
+  jukebox: { x: 180, y: 500 },
+  booth: { x: 1040, y: 580 },
+  cake: { x: 760, y: 490 },
+  console: { x: 300, y: 520 },
+  plant: { x: 1080, y: 545 },
+  stool: { x: 520, y: 590 },
+};
+
 function roomTitle(seeds: TasteEntity[], tags: TasteTag[], anchor: TasteEntity): string {
   const parts: string[] = [];
   const push = (name: string) => {
@@ -276,6 +294,124 @@ function roomTitle(seeds: TasteEntity[], tags: TasteTag[], anchor: TasteEntity):
   return `${parts[0]} · ${parts[1]}`.slice(0, 180);
 }
 
+function spotFor(kind: string, taken: { x: number; y: number; kind: string }[]): { x: number; y: number } {
+  const base = FURNITURE[kind] ?? { x: 600, y: 540 };
+  if (kind === "rug") return base;
+  for (let step = 0; step < 6; step += 1) {
+    const x = Math.max(90, Math.min(1110, base.x + step * 80));
+    const crowded = taken.some((object) => {
+      if (object.kind === "rug") return false;
+      const dx = object.x - x;
+      const dy = object.y - base.y;
+      return dx * dx + dy * dy < 70 * 70;
+    });
+    if (!crowded) return { x, y: base.y };
+  }
+  return base;
+}
+
+function propHost(prop: ObjectKind, pool: TasteEntity[], fallback: TasteEntity): TasteEntity {
+  const test =
+    prop === "umbrella"
+      ? /rain|storm/i
+      : prop === "sprite"
+        ? /anime|ghibli|totoro|spirit/i
+        : prop === "jukebox" || prop === "booth"
+          ? /diner|retro|jukebox|chrome/i
+          : prop === "cake" || prop === "teapot"
+            ? /tea|pastel|brunch|garden/i
+            : /./;
+  return pool.find((entity) => test.test(entity.name) || entity.tags.some((tag) => test.test(tag.name))) ?? fallback;
+}
+
+/** Cited extras so the floor is a room: a rug, a counter vessel, the lead artist, the seed work, and a prop from the prompt. */
+function inhabitRoom(
+  objects: Atmosphere["room"]["objects"],
+  args: {
+    prompt: string;
+    era: Era | null;
+    drinkName: string;
+    place: TasteEntity | null;
+    artist: TasteEntity | null;
+    work: TasteEntity | null;
+    pool: TasteEntity[];
+    hero: Citation;
+    anchor: TasteEntity;
+  },
+): void {
+  const text = args.prompt.toLowerCase();
+  const add = (kind: ObjectKind, label: string, citation: Citation) => {
+    if (objects.length >= MAX_OBJECTS) return;
+    if (objects.some((object) => object.kind === kind)) return;
+    const at = spotFor(kind, objects);
+    objects.push({
+      id: `object-room-${kind}`,
+      kind,
+      x: at.x,
+      y: at.y,
+      label: label.slice(0, 80),
+      citation,
+    });
+  };
+
+  add("rug", "Rug", {
+    ...args.hero,
+    detail: `The rug takes its color from ${args.hero.tag ? `the tag “${args.hero.tag}” on ` : ""}${args.hero.name}.`,
+  });
+
+  const tea = /tea|hojicha|earl grey/.test(args.drinkName.toLowerCase());
+  if (args.place && tea) {
+    add(
+      "teapot",
+      args.place.name,
+      cite(args.place, `${args.place.name} sets out ${args.drinkName}.`, "tea"),
+    );
+  } else if (args.place && args.drinkName && !objects.some((object) => object.kind === "bottle" || object.kind === "bar" || object.kind === "cup")) {
+    add("bottle", args.place.name, cite(args.place, `${args.place.name} stocks the counter with ${args.drinkName}.`, null));
+  }
+
+  if (args.artist && !objects.some((object) => object.kind === "record" || object.kind === "speaker")) {
+    add(
+      "record",
+      args.artist.name,
+      cite(args.artist, `${args.artist.name} is on the record player.`, args.artist.tags[0]?.name ?? null),
+    );
+  }
+
+  if (args.era?.decade === "1980s") {
+    const host = args.work ?? args.anchor;
+    add("console", host.name, cite(host, `${host.name} sits with the console because the prompt says ${args.era.label}.`, host.tags[0]?.name ?? null));
+  }
+  if (/\bdiner\b/.test(text)) {
+    const host = propHost("jukebox", args.pool, args.work ?? args.anchor);
+    add("jukebox", host.name, cite(host, `${host.name} is the jukebox, from a diner tag.`, host.tags[0]?.name ?? null));
+    add("booth", host.name, cite(host, `${host.name} is the booth, from a diner tag.`, host.tags[0]?.name ?? null));
+  }
+  if (/tea party|afternoon tea|garden tea/.test(text)) {
+    const host = propHost("cake", args.pool, args.place ?? args.anchor);
+    add("cake", host.name, cite(host, `${host.name} is the tiered stand for the tea party.`, host.tags[0]?.name ?? "tea"));
+  }
+  if (/ghibli|anime|totoro|spirited|miyazaki/.test(text)) {
+    const host = propHost("sprite", args.pool, args.work ?? args.anchor);
+    add("sprite", host.name, cite(host, `${host.name} brings the soot sprites.`, host.tags[0]?.name ?? null));
+  }
+  if (/\b(rain|rainy|storm|drizzle)\b/.test(text)) {
+    const host = propHost("umbrella", args.pool, args.anchor);
+    add("umbrella", host.name, cite(host, `${host.name} puts an umbrella by the door. The prompt says rain.`, host.tags[0]?.name ?? null));
+  }
+  if (args.work && !objects.some((object) => object.kind === "book" || object.kind === "shelf")) {
+    add("shelf", args.work.name, cite(args.work, `${args.work.name} is on the shelf.`, args.work.tags[0]?.name ?? null));
+  }
+  if (!objects.some((object) => object.kind === "plant" || object.kind === "sprite")) {
+    add("plant", args.anchor.name, cite(args.anchor, `${args.anchor.name} is the plant in the corner.`, args.anchor.tags[0]?.name ?? null));
+  }
+  if (args.place && objects.some((object) => object.kind === "bar") && !objects.some((object) => object.kind === "stool")) {
+    add("stool", args.place.name, cite(args.place, `${args.place.name} has a stool at the counter.`, null));
+  }
+
+  objects.sort((a, b) => Number(a.kind !== "rug") - Number(b.kind !== "rug"));
+}
+
 export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere {
   const seeds = dedupe(graph.seeds);
   const seedIds = new Set(seeds.map((seed) => seed.id));
@@ -285,7 +421,8 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     if (aSeed !== bSeed) return bSeed - aSeed;
     return byAffinity(a, b);
   });
-  const places = dedupe(graph.places).sort(byAffinity);
+  // Counter rank is category fit, then affinity. Sorting again by affinity puts a cocktail bar ahead of a tea room.
+  const places = dedupe(graph.places);
   const brands = dedupe(graph.brands).sort(byAffinity);
   const books = dedupe([...graph.books, ...seeds.filter((seed) => seed.type.includes("book"))]).sort(byAffinity);
   const movies = dedupe(graph.movies)
@@ -393,20 +530,16 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     .map((item) => item.light)
     .slice(0, 8)
     .map((light, index) => ({ ...light, color: gradeHex(light.color, era, index) }));
-  if (era?.decade === "1970s") {
-    const pendant = lights.find((light) => light.kind === "pendant");
-    if (pendant) pendant.kind = "globe";
-  }
+  forceGlobe(lights, era);
 
   const heroHue = lead?.hue ?? hashString(anchor.id) % 360;
   const heroSat = lead?.sat ?? 40;
   const primary = lights[0].color;
   const secondary = lights[1]?.color ?? hslToHex((heroHue + 22) % 360, heroSat * 0.7, day ? 62 : 64);
   const accent = lights.find((light) => light.color !== primary)?.color ?? hslToHex((heroHue + 48) % 360, heroSat, 50);
-  const ambient = gradeHex(
-    hslToHex(heroHue, heroSat * (day ? 0.28 : 0.42), day ? (window === "day-concrete" ? 58 : 78) : 13),
+  const ambient = eraAmbient(
     era,
-    3,
+    gradeHex(hslToHex(heroHue, heroSat * (day ? 0.28 : 0.42), day ? (window === "day-concrete" ? 58 : 78) : 13), era, 3),
   );
   const ink = day ? "#241c18" : "#f4efe6";
   const heroCitation = lights[0].citation;
@@ -439,9 +572,12 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       {
         role: "ambient" as const,
         hex: ambient,
-        because: day
-          ? "Daylight windows lift the wall so the fixtures read as color, not as the only light."
-          : "The wall is the primary hue, dropped so the fixtures have somewhere to land.",
+        because:
+          era?.decade === "1970s"
+            ? "The prompt says the 1970s, so the wall is amber and the ceiling light is a globe."
+            : day
+              ? "Daylight windows lift the wall so the fixtures read as color, not as the only light."
+              : "The wall is the primary hue, dropped so the fixtures have somewhere to land.",
         citation: heroCitation,
       },
     ],
@@ -506,9 +642,8 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       label: eraChipLabel(era).slice(0, 80),
       citation,
     };
-    if (objects.length < 6) objects.push(crt);
-    else objects[objects.length - 1] = crt;
-    if (objects.length < 6) {
+    if (objects.length < MAX_OBJECTS) objects.push(crt);
+    if (objects.length < MAX_OBJECTS) {
       objects.push({
         id: "object-era-lava",
         kind: "lava",
@@ -624,7 +759,24 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     });
   }
 
-  const decor = objects.slice(0, 4).map((object) => ({
+  const poured = drinks.find((row) => !row.gap);
+  inhabitRoom(objects, {
+    prompt,
+    era,
+    drinkName: poured?.name ?? "",
+    place: places[0] ?? null,
+    artist: artists[0] ?? null,
+    work:
+      seeds.find((seed) => seed.type.includes("movie") || seed.type.includes("tv") || seed.type.includes("book")) ??
+      movies[0] ??
+      books[0] ??
+      null,
+    pool,
+    hero: heroCitation,
+    anchor,
+  });
+
+  const decor = objects.slice(0, 6).map((object) => ({
     item: `${prettyKind(object.kind)} · ${object.label}`.slice(0, 180),
     because: object.citation.detail,
     citation: object.citation,
@@ -704,7 +856,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
       windowBox: plan.windowBox,
       posterBox: plan.posterBox,
       lights,
-      objects: objects.slice(0, 6),
+      objects: objects.slice(0, MAX_OBJECTS),
       display,
     },
     music,

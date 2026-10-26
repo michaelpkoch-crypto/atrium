@@ -4,7 +4,7 @@ import { createGateway, generateText, Output } from "ai";
 import { z } from "zod";
 
 import { assembleGraph } from "@/lib/agent/assemble";
-import { knownProposal, resolveProposal, tagFitsMood, type PersonKind, type Proposal, type WorkKind } from "@/lib/agent/propose";
+import { knownProposal, proposalSummary, resolveProposal, tagFitsMood, type PersonKind, type Proposal, type WorkKind } from "@/lib/agent/propose";
 import type { AgentStep } from "@/lib/agent/steps";
 import type { LlmConfig } from "@/lib/config";
 import type { TasteClient, TasteGraph } from "@/lib/qloo/types";
@@ -48,7 +48,8 @@ reading Murakami on a rainy night → Norwegian Wood, Kafka on the Shore; books;
 Blade Runner meets a 1970s jazz bar → Blade Runner movie; Vangelis artist; placeQueries jazz bar, jazz club; placeTags jazz; rejectTags brutal death; time night; weather clear.
 Tarantino road trip diner at 2am → Pulp Fiction, Reservoir Dogs; movies; Quentin Tarantino person; Ennio Morricone artist; placeQueries diner, american diner; placeTags diner; moodTags neon, retro, crime; time night; brightness dim; rejectTags brutality, bathroom, warehouse.
 Bridgerton garden tea party → Bridgerton tv; Pride and Prejudice movie; Vitamin String Quartet artist; placeQueries tea room, tea house; placeTags tea, garden; moodTags regency, romance, pastel; time day; brightness bright; rejectTags poetry, horror, steamy. A place named only Garden or Gården is not a venue.
-workKinds values are movie, tv, or book. personKinds values are person or artist. city is empty when the prompt has no city.`;
+workKinds values are movie, tv, or book. personKinds values are person or artist.
+city is a real place the venues should be near, or empty. Stranger Things is Atlanta. The Lord of the Rings is Oxford. Tarantino and Blade Runner are Los Angeles. Murakami is Tokyo. Never answer Madrid or Spain unless the prompt says them.`;
 
 export type ModelDiagnostics = {
   candidates: { id: string; name: string; type: string; score: number; query: string; typed: string }[];
@@ -97,7 +98,7 @@ export async function compileWithModel(args: {
     why: proposal.reason,
     call: "propose_seeds",
     detail: modelUsed ? args.llm.modelId : "canonical names",
-    result: [...proposal.works.map((work) => work.name), ...proposal.people.map((person) => person.name)].join(", "),
+    result: proposalSummary(proposal),
   });
 
   const diagnostics: ModelDiagnostics = {
@@ -115,7 +116,8 @@ export async function compileWithModel(args: {
   };
 
   let graph = earlyGraph ?? (await assembleGraph(args.client, args.prompt, proposal, steps));
-  if (graph) {
+  // Known prompts already filtered their tags. A verdict here waits on the model after Qloo has finished.
+  if (graph && !known) {
     const judged = await judgeTags(args.prompt, proposal, graph, args.llm, secrets);
     if (judged) {
       graph = judged.graph;
@@ -128,6 +130,8 @@ export async function compileWithModel(args: {
         });
       }
     }
+  }
+  if (graph) {
     diagnostics.candidates = graph.seeds.map((seed) => ({
       id: seed.id,
       name: seed.name,
@@ -151,7 +155,7 @@ async function proposeWithModel(
       model: modelFor(llm),
       temperature: 0,
       maxOutputTokens: 500,
-      abortSignal: AbortSignal.timeout(6_000),
+      abortSignal: AbortSignal.timeout(known ? 2_500 : 4_000),
       system: `${ORCHESTRATOR_RULES}\n${PROPOSE_HINT}`,
       prompt,
       output: Output.object({ schema: proposalSchema, name: "seed_proposal", description: "Canonical works and place kinds." }),
@@ -168,7 +172,7 @@ async function proposeWithModel(
         model: modelFor(llm),
         temperature: 0,
         maxOutputTokens: 500,
-        abortSignal: AbortSignal.timeout(5_000),
+        abortSignal: AbortSignal.timeout(3_000),
         system: `${ORCHESTRATOR_RULES}\n${PROPOSE_HINT}\nReply with one JSON object and no markdown.`,
         prompt,
       });

@@ -1,6 +1,6 @@
 import { eraFromPrompt, knownProposal, labelForScene, sceneFromPrompt, windowForScene, type Era } from "@/lib/agent/propose";
 import { hashString, hslToHex } from "@/lib/atmosphere/color";
-import { eraChipLabel, eraCitation, gradeHex } from "@/lib/atmosphere/era";
+import { eraChipLabel, eraCitation, forceGlobe, gradeHex } from "@/lib/atmosphere/era";
 import { PLANS, type ObjectKind } from "@/lib/atmosphere/plans";
 import { roomSceneSchema, type Atmosphere, type Citation, type RoomScene } from "@/lib/atmosphere/schema";
 import type { PlanId, TextureKind, WindowScene } from "@/lib/atmosphere/families";
@@ -281,13 +281,10 @@ export function sceneFromPlain(args: {
       citation: baselineCitation(object.label, "Plain reading. This object was not chosen from a Qloo entity.", 20 + index),
     };
   });
-  if (args.era?.decade === "1970s") {
-    const pendant = lights.find((light) => light.kind === "pendant");
-    if (pendant) pendant.kind = "globe";
-  }
+  forceGlobe(lights, args.era ?? null);
   if (args.era?.decade === "1980s") {
     const citation = eraCitation(args.era);
-    if (objects.length < 6) {
+    if (objects.length < 8) {
       objects.push({
         id: "plain-object-era-crt",
         kind: "crt",
@@ -297,7 +294,7 @@ export function sceneFromPlain(args: {
         citation,
       });
     }
-    if (objects.length < 6) {
+    if (objects.length < 8) {
       objects.push({
         id: "plain-object-era-lava",
         kind: "lava",
@@ -339,11 +336,12 @@ export function sceneFromPlain(args: {
 
 function paletteFor(room: RoomScene, window: WindowScene): PlainRoom["palette"] {
   const day = window === "day-pastel" || window === "day-concrete";
+  const amber = room.eraLabel === "1970s" || (room.eraLabel != null && /^197\d$/.test(room.eraLabel));
   return {
     primary: room.lights[0].color,
     secondary: room.lights[1]?.color ?? room.lights[0].color,
     accent: room.lights[2]?.color ?? room.lights[0].color,
-    ambient: day ? "#f3eadf" : "#120f0d",
+    ambient: amber ? "#8a5a32" : day ? "#f3eadf" : "#120f0d",
     ink: day ? "#241c18" : "#f4efe6",
   };
 }

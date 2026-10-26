@@ -88,4 +88,26 @@ describe("atmosphere compiler", () => {
     expect(room.decor.length).toBeGreaterThanOrEqual(2);
     expect(room.drinks[0]?.venue).toBe("North Counter");
   });
+
+  it("keeps a tea room ahead of a higher-affinity cocktail bar", () => {
+    const show = entity("show-1", "Bridgerton", "urn:entity:tv_show", ["Romance"]);
+    const teaRoom = entity("place-tea", "Tea Room - Siena", "urn:entity:place", ["tea", "tea room"], 0.4);
+    const sky = entity("place-sky", "Sky Garden", "urn:entity:place", ["cocktail", "bar"], 0.92);
+    const room = compileAtmosphere(
+      "Bridgerton garden tea party",
+      graph({ seeds: [show], places: [teaRoom, sky] }),
+    );
+    expect(room.drinks[0]?.venue).toBe("Tea Room - Siena");
+    expect(room.drinks[0]?.name).toBe("Earl Grey");
+    expect(room.room.objects.some((object) => object.kind === "rug")).toBe(true);
+    expect(room.room.objects.some((object) => object.kind === "teapot" || object.kind === "cake")).toBe(true);
+  });
+
+  it("grades a 1970s room amber and hangs a globe", () => {
+    const film = entity("film-1", "Blade Runner", "urn:entity:movie", ["Jazz", "Noir"]);
+    const room = compileAtmosphere("Blade Runner meets a 1970s jazz bar", graph({ seeds: [film] }));
+    expect(room.palette.ambient).toBe("#8a5a32");
+    expect(room.room.lights.some((light) => light.kind === "globe" && light.y <= 150)).toBe(true);
+    expect(room.room.eraLabel).toBe("1970s");
+  });
 });

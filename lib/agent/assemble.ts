@@ -63,7 +63,7 @@ export async function assembleGraph(
               entityIds: artistIds,
               tagIds: [],
               take: 4,
-              timeoutMs: 6_000,
+              timeoutMs: 5_000,
             });
         if (!result) return;
         const key = keyFor(filterType);
@@ -381,10 +381,10 @@ async function placeInsights(
       timeoutMs,
     });
   try {
-    return await run(placeTagIds, city || undefined, 8_000);
+    return await run(placeTagIds, city || undefined, 5_000);
   } catch {
     try {
-      return await run(placeTagIds.slice(0, 1), undefined, 4_000);
+      return await run(placeTagIds.slice(0, 1), undefined, 2_000);
     } catch {
       return null;
     }

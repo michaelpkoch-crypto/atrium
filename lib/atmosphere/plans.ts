@@ -20,7 +20,15 @@ export type ObjectKind =
   | "speaker"
   | "textile"
   | "crt"
-  | "lava";
+  | "lava"
+  | "jukebox"
+  | "booth"
+  | "umbrella"
+  | "sprite"
+  | "console"
+  | "shelf"
+  | "rug"
+  | "teapot";
 
 export type ObjectRole = "place" | "brand" | "book" | "artist" | "any";
 

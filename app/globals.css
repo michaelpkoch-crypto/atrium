@@ -215,6 +215,12 @@
   animation: atrium-mote 9s ease-in-out infinite;
 }
 
+.room-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: atrium-spin 4.8s linear infinite;
+}
+
 .room-parallax {
   animation: atrium-parallax 18s ease-in-out infinite;
 }
@@ -267,6 +273,12 @@
   }
 }
 
+@keyframes atrium-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes atrium-mote {
   0%,
   100% {
@@ -309,6 +321,7 @@
   .room-steam,
   .room-rain,
   .room-mote,
+  .room-spin,
   .room-parallax {
     animation: none;
   }

@@ -269,11 +269,13 @@ function RoomSvg({
       </defs>
 
       <rect width="1200" height="500" fill={`url(#${uid}-wall)`} />
+      {seventies(scene.eraLabel) ? <rect width="1200" height="500" fill="#e39a45" opacity="0.38" /> : null}
       {eighties(scene.eraLabel) ? <WoodPanel /> : null}
       <rect width="1200" height="180" fill={`url(#${uid}-ceiling)`} />
       <rect width="1200" height="500" filter={`url(#${uid}-grain)`} opacity={day ? 0.05 : 0.12} />
       <rect width="1200" height="26" fill="#000" opacity={day ? 0.08 : 0.38} />
       <polygon points="0,500 1200,500 1200,760 0,760" fill={`url(#${uid}-floor)`} />
+      {seventies(scene.eraLabel) ? <rect y="500" width="1200" height="260" fill="#c47a32" opacity="0.28" /> : null}
       {Array.from({ length: 8 }, (_, index) => (
         <line key={index} x1={index * 160} y1="500" x2={index * 190 - 80} y2="760" stroke={wood} strokeOpacity={day ? 0.25 : 0.35} />
       ))}
@@ -294,9 +296,11 @@ function RoomSvg({
       ))}
       <FloorSheen lights={scene.lights} />
 
-      {scene.objects.map((object) => (
-        <Piece key={object.id} object={object} palette={palette} day={day} selected={selected === object.id} interactive={interactive} onSelect={onSelect} />
-      ))}
+      {[...scene.objects]
+        .sort((a, b) => Number(a.kind !== "rug") - Number(b.kind !== "rug"))
+        .map((object) => (
+          <Piece key={object.id} object={object} palette={palette} day={day} selected={selected === object.id} interactive={interactive} onSelect={onSelect} />
+        ))}
       {scene.lights.map((light) => (
         <Fixture key={light.id} light={light} selected={selected === light.id} interactive={interactive} onSelect={onSelect} />
       ))}
@@ -406,10 +410,12 @@ function AtmosphereBits({ scene }: { scene: RoomScene }) {
   const day = scene.window === "day-pastel" || scene.window === "day-concrete";
   const rain = !day && (scene.window === "rain" || scene.window === "neon-city" || scene.plan === "neon");
   const steam = !day && (scene.plan === "bath" || scene.window === "dusk");
+  const vessel = scene.objects.find((object) => object.kind === "teapot" || object.kind === "cup");
   return (
     <g pointerEvents="none">
       {rain ? <RainRoom /> : <Dust />}
       {steam ? <Steam x={scene.plan === "bath" ? 380 : 520} y={500} /> : null}
+      {vessel ? <Steam x={vessel.x} y={vessel.y - 36} /> : null}
     </g>
   );
 }
@@ -688,9 +694,10 @@ function LightShape({ light }: { light: RoomLight }) {
   if (light.kind === "globe") {
     return (
       <g>
-        <line x1={light.x} y1="26" x2={light.x} y2={light.y - 22} stroke="#d9d0c4" strokeWidth="2" />
-        <circle cx={light.x} cy={light.y} r="22" fill={light.color} />
-        <circle cx={light.x - 6} cy={light.y - 6} r="6" fill="#fff" opacity="0.35" />
+        <line x1={light.x} y1="18" x2={light.x} y2={light.y - 40} stroke="#f0e2cc" strokeWidth="3" />
+        <circle cx={light.x} cy={light.y} r="40" fill={light.color} />
+        <circle cx={light.x} cy={light.y} r="40" fill="none" stroke="#f6e2c4" strokeWidth="3" />
+        <circle cx={light.x - 12} cy={light.y - 14} r="12" fill="#fff" opacity="0.45" />
       </g>
     );
   }
@@ -705,6 +712,10 @@ function LightShape({ light }: { light: RoomLight }) {
 
 function eighties(label: string | undefined): boolean {
   return Boolean(label && (/^198\d$/.test(label) || label === "1980s"));
+}
+
+function seventies(label: string | undefined): boolean {
+  return Boolean(label && (/^197\d$/.test(label) || label === "1970s"));
 }
 
 function WoodPanel() {
@@ -740,10 +751,11 @@ function Piece({
     </g>
   );
   if (!interactive) return body;
+  const wide = object.kind === "bar" || object.kind === "rug" || object.kind === "booth" || object.kind === "sofa";
   return (
     <Hit id={object.id} label={`${object.kind}, ${object.label}`} selected={selected} onSelect={onSelect}>
       {body}
-      <rect x={object.x - 40} y={object.y - 70} width="80" height="80" fill="transparent" />
+      <rect x={object.x - (wide ? 160 : 46)} y={object.y - (object.kind === "bar" ? 130 : 80)} width={wide ? 320 : 92} height={object.kind === "bar" ? 200 : 110} fill="transparent" />
     </Hit>
   );
 }
@@ -752,13 +764,29 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
   if (kind === "bar") {
     return (
       <g>
-        <rect x={x - 96} y={y - 18} width="14" height="46" rx="2" fill={shade(fill, 0.15)} />
-        <rect x={x + 82} y={y - 18} width="14" height="46" rx="2" fill={shade(fill, 0.15)} />
-        <path d={`M${x - 98} ${y - 52} Q ${x} ${y - 36} ${x + 98} ${y - 52} L${x + 92} ${y - 28} L${x - 92} ${y - 28} Z`} fill={fill} />
-        <rect x={x - 86} y={y - 28} width="172" height="34" fill={shade(fill, 0.25)} />
-        <rect x={x - 70} y={y - 44} width="10" height="16" rx="2" fill={accent} opacity="0.85" />
-        <rect x={x - 52} y={y - 48} width="8" height="20" rx="2" fill="#d9efe8" opacity="0.7" />
-        <line x1={x - 78} y1={y + 10} x2={x + 78} y2={y + 10} stroke={accent} strokeWidth="3" />
+        <rect x={x - 150} y={y - 124} width="300" height="78" rx="3" fill={shade(fill, 0.08)} />
+        <rect x={x - 140} y={y - 112} width="280" height="7" fill={accent} opacity="0.7" />
+        {[-112, -80, -52, -26, 4, 32, 62, 94].map((dx, index) => (
+          <rect
+            key={dx}
+            x={x + dx}
+            y={y - 112 - (18 + (index % 3) * 10)}
+            width={index % 2 === 0 ? 12 : 8}
+            height={22 + (index % 3) * 12}
+            rx="2"
+            fill={index % 3 === 0 ? accent : index % 3 === 1 ? "#d9efe8" : "#f4efe6"}
+            opacity="0.92"
+          />
+        ))}
+        <rect x={x - 168} y={y - 46} width="336" height="22" rx="3" fill={fill} />
+        <rect x={x - 156} y={y - 24} width="312" height="40" fill={shade(fill, 0.22)} />
+        {[-100, 0, 100].map((dx) => (
+          <g key={dx}>
+            <ellipse cx={x + dx} cy={y + 28} rx="26" ry="9" fill={shade(fill, 0.05)} />
+            <line x1={x + dx} y1={y + 30} x2={x + dx} y2={y + 64} stroke={fill} strokeWidth="4" />
+            <line x1={x + dx - 16} y1={y + 64} x2={x + dx + 16} y2={y + 64} stroke={fill} strokeWidth="4" />
+          </g>
+        ))}
       </g>
     );
   }
@@ -816,19 +844,33 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
       </g>
     );
   }
-  if (kind === "book") {
+  if (kind === "book" || kind === "shelf") {
     return (
       <g>
-        <rect x={x - 18} y={y - 14} width="36" height="10" fill={accent} />
-        <rect x={x - 16} y={y - 22} width="32" height="10" fill="#f4efe6" />
+        <rect x={x - 46} y={y - 78} width="92" height="78" rx="2" fill={shade(fill, 0.15)} />
+        {[0, 1, 2].map((row) => (
+          <g key={row}>
+            <line x1={x - 40} y1={y - 54 + row * 24} x2={x + 40} y2={y - 54 + row * 24} stroke={accent} strokeWidth="3" />
+            {[0, 1, 2, 3, 4].map((col) => (
+              <rect key={col} x={x - 38 + col * 16} y={y - 74 + row * 24} width="12" height="18" fill={col % 2 ? accent : "#f4efe6"} opacity="0.9" />
+            ))}
+          </g>
+        ))}
       </g>
     );
   }
   if (kind === "record" || kind === "speaker") {
     return (
       <g>
-        <rect x={x - 22} y={y - 36} width="44" height="36" rx="4" fill={fill} />
-        <circle cx={x} cy={y - 18} r="10" fill="none" stroke={accent} strokeWidth="3" />
+        <rect x={x - 36} y={y - 28} width="72" height="16" rx="3" fill={fill} />
+        <rect x={x - 28} y={y - 8} width="10" height="28" fill={fill} />
+        <rect x={x + 18} y={y - 8} width="10" height="28" fill={fill} />
+        <g className="room-spin">
+          <circle cx={x} cy={y - 46} r="28" fill="#1a120c" />
+          <circle cx={x} cy={y - 46} r="10" fill={accent} />
+          <circle cx={x} cy={y - 46} r="3" fill="#f4efe6" />
+        </g>
+        {kind === "speaker" ? <rect x={x + 34} y={y - 70} width="22" height="48" rx="3" fill={fill} /> : null}
       </g>
     );
   }
@@ -843,8 +885,89 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
   if (kind === "cake") {
     return (
       <g>
-        <rect x={x - 16} y={y - 20} width="32" height="16" rx="4" fill={accent} />
-        <circle cx={x} cy={y - 22} r="3" fill="#fff" />
+        <rect x={x - 34} y={y - 16} width="68" height="16" rx="2" fill={accent} />
+        <rect x={x - 24} y={y - 34} width="48" height="18" rx="2" fill="#f4efe6" />
+        <rect x={x - 14} y={y - 50} width="28" height="16" rx="2" fill={accent} />
+        <circle cx={x} cy={y - 54} r="4" fill="#fff" />
+        <line x1={x} y1={y} x2={x} y2={y + 16} stroke={fill} strokeWidth="3" />
+        <line x1={x - 16} y1={y + 16} x2={x + 16} y2={y + 16} stroke={fill} strokeWidth="3" />
+      </g>
+    );
+  }
+  if (kind === "teapot") {
+    return (
+      <g>
+        <ellipse cx={x} cy={y - 16} rx="28" ry="16" fill={accent} />
+        <path d={`M${x + 24} ${y - 20} Q ${x + 46} ${y - 8} ${x + 24} ${y - 4}`} fill="none" stroke={accent} strokeWidth="4" />
+        <rect x={x - 8} y={y - 36} width="16" height="8" rx="2" fill={fill} />
+        <ellipse cx={x - 42} cy={y - 6} rx="10" ry="6" fill="#d9efe8" />
+        <ellipse cx={x + 52} cy={y - 4} rx="10" ry="6" fill="#d9efe8" />
+        <g className="room-steam" opacity="0.7">
+          <ellipse cx={x} cy={y - 48} rx="8" ry="4" fill="#f4efe6" />
+        </g>
+      </g>
+    );
+  }
+  if (kind === "rug") {
+    return (
+      <g>
+        <ellipse cx={x} cy={y} rx="360" ry="54" fill={accent} opacity="0.5" />
+        <ellipse cx={x} cy={y} rx="270" ry="36" fill="none" stroke={fill} strokeWidth="8" opacity="0.35" />
+        <ellipse cx={x} cy={y} rx="150" ry="16" fill={fill} opacity="0.18" />
+      </g>
+    );
+  }
+  if (kind === "umbrella") {
+    return (
+      <g>
+        <rect x={x - 8} y={y - 10} width="16" height="36" rx="2" fill={fill} />
+        <path d={`M${x - 28} ${y - 18} Q ${x} ${y - 58} ${x + 28} ${y - 18}`} fill={accent} />
+        <line x1={x} y1={y - 52} x2={x} y2={y - 8} stroke={fill} strokeWidth="3" />
+        <path d={`M${x + 18} ${y - 8} Q ${x + 36} ${y - 40} ${x + 8} ${y - 16}`} fill="#f4efe6" opacity="0.8" />
+      </g>
+    );
+  }
+  if (kind === "sprite") {
+    return (
+      <g>
+        {[0, 22, -18].map((dx, index) => (
+          <g key={dx}>
+            <circle cx={x + dx} cy={y - 16 - (index === 0 ? 10 : 0)} r={index === 0 ? 16 : 11} fill="#1a120c" />
+            <circle cx={x + dx - 4} cy={y - 18 - (index === 0 ? 10 : 0)} r="2" fill="#f4efe6" />
+            <circle cx={x + dx + 4} cy={y - 18 - (index === 0 ? 10 : 0)} r="2" fill="#f4efe6" />
+          </g>
+        ))}
+      </g>
+    );
+  }
+  if (kind === "jukebox") {
+    return (
+      <g>
+        <rect x={x - 28} y={y - 78} width="56" height="86" rx="6" fill={fill} />
+        <path d={`M${x - 28} ${y - 70} Q ${x} ${y - 108} ${x + 28} ${y - 70}`} fill={accent} />
+        <rect x={x - 18} y={y - 58} width="36" height="28" rx="2" fill="#141820" />
+        <circle cx={x} cy={y - 8} r="8" fill={accent} />
+      </g>
+    );
+  }
+  if (kind === "booth") {
+    return (
+      <g>
+        <path d={`M${x - 70} ${y} Q ${x - 70} ${y - 70} ${x - 20} ${y - 48} L${x - 20} ${y} Z`} fill={fill} />
+        <path d={`M${x + 70} ${y} Q ${x + 70} ${y - 70} ${x + 20} ${y - 48} L${x + 20} ${y} Z`} fill={fill} />
+        <rect x={x - 22} y={y - 28} width="44" height="12" rx="2" fill={accent} />
+      </g>
+    );
+  }
+  if (kind === "console") {
+    return (
+      <g>
+        <rect x={x - 40} y={y - 22} width="80" height="28" rx="4" fill="#8a5a32" />
+        <rect x={x - 22} y={y - 16} width="28" height="16" rx="2" fill="#141820" />
+        <rect x={x + 14} y={y - 18} width="10" height="6" fill={accent} />
+        <line x1={x + 28} y1={y - 22} x2={x + 36} y2={y - 40} stroke={fill} strokeWidth="3" />
+        <circle cx={x + 36} cy={y - 44} r="7" fill={accent} />
+        <rect x={x - 8} y={y - 36} width="14" height="8" fill="#c47a32" />
       </g>
     );
   }

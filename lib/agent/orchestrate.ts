@@ -3,7 +3,7 @@ import { compileAtmosphere } from "@/lib/atmosphere/compile";
 import type { Atmosphere } from "@/lib/atmosphere/schema";
 import { readConfig, type AppConfig, type DispatchMode } from "@/lib/config";
 import { NoTasteMatch, PromptError } from "@/lib/agent/errors";
-import { knownProposal, sceneFromPrompt } from "@/lib/agent/propose";
+import { knownProposal, placeCity, proposalSummary, sceneFromPrompt } from "@/lib/agent/propose";
 import { assembleGraph } from "@/lib/agent/assemble";
 import { scheduleSampleWarmup } from "@/lib/qloo/warm";
 import { extractQueries, nameScore, tagAccepts, tagQueriesFor, tokens } from "@/lib/agent/queries";
@@ -261,7 +261,7 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
         why: known.reason,
         call: "propose_seeds",
         detail: "canonical names",
-        result: [...known.works.map((work) => work.name), ...known.people.map((person) => person.name)].join(", "),
+        result: proposalSummary(known),
       },
     ];
     const graph = await assembleGraph(client, prompt, known, steps);
@@ -353,7 +353,14 @@ export async function gatherGraph(client: TasteClient, prompt: string): Promise<
   await Promise.all(
     INSIGHT_TARGETS.map(async (filterType) => {
       try {
-        const result = await client.insights({ filterType, entityIds, tagIds, take: 6 });
+        const fitted = filterType === "urn:entity:place" ? placeCity(prompt) : null;
+        const result = await client.insights({
+          filterType,
+          entityIds,
+          tagIds,
+          take: 6,
+          location: fitted ?? undefined,
+        });
         if (filterType === "urn:tag") {
           for (const tag of result.tags) {
             if (!tagFitsPrompt(prompt, tag) && !tagIds.includes(tag.id)) continue;

@@ -52,7 +52,7 @@ const BLADE: Proposal = {
   placeTags: ["jazz", "bar", "cocktail"],
   moodTags: ["jazz", "neon", "noir", "night"],
   rejectTags: ["brutal death", "death metal", "gore", "disco", "funk"],
-  city: "",
+  city: "Los Angeles",
   scene: { time: "night", weather: "clear", brightness: "dim" },
   reason: "Blade Runner is the film. The 1970s half is a jazz bar, not a landmark.",
 };
@@ -88,7 +88,7 @@ const TARANTINO: Proposal = {
   placeTags: ["diner"],
   moodTags: ["neon", "retro", "crime", "diner"],
   rejectTags: ["brutality", "bathroom", "warehouse", "toaster", "gore"],
-  city: "",
+  city: "Los Angeles",
   scene: { time: "night", weather: "clear", brightness: "dim" },
   reason: "A 2am Tarantino diner is Pulp Fiction and Reservoir Dogs, chrome and a jukebox, not a bathroom.",
 };
@@ -136,6 +136,7 @@ const STATED_ROOMS: { test: RegExp; room: StatedRoom }[] = [
   { test: /\bdiner\b/i, room: { label: "Diner", queries: ["diner", "american diner"], tags: ["diner"] } },
   { test: /\b(jazz bar|jazz club|jazz lounge)\b/i, room: { label: "Bar", queries: ["jazz bar", "jazz club"], tags: ["jazz", "bar"] } },
   { test: /\bbasement\b/i, room: { label: "Basement", queries: ["tavern", "basement bar"], tags: ["bar", "tavern"] } },
+  { test: /\b(tavern|alehouse)\b/i, room: { label: "Tavern", queries: ["tavern", "inn"], tags: ["tavern", "pub"] } },
   { test: /\bbar\b/i, room: { label: "Bar", queries: ["bar", "jazz bar"], tags: ["bar", "jazz"] } },
   { test: /\b(reading nook|nook)\b/i, room: { label: "Reading nook", queries: ["cafe", "kissaten"], tags: ["cafe", "kissaten"] } },
   { test: /\b(brunch|patisserie|pastry)\b/i, room: { label: "Café", queries: ["patisserie", "brunch cafe"], tags: ["cafe", "brunch", "pastry"] } },
@@ -267,6 +268,38 @@ export function eraFromPrompt(prompt: string): Era | null {
   return null;
 }
 
+/**
+ * A place the venues should actually be near.
+ * Empty when the prompt does not point at a real city. Madrid is not the default.
+ */
+export function placeCity(prompt: string): string | null {
+  const text = prompt.toLowerCase();
+  if (/stranger things/.test(text)) return "Atlanta";
+  if (/\b(lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien)\b/.test(text)) return "Oxford";
+  if (/\b(tarantino|pulp fiction|reservoir dogs)\b/.test(text)) return "Los Angeles";
+  if (/blade runner/.test(text)) return "Los Angeles";
+  if (/murakami|norwegian wood|kafka on the shore/.test(text)) return "Tokyo";
+  return null;
+}
+
+const UNSOLICITED_CITY = /\b(madrid|spain|españa|espana)\b/i;
+
+/** Franchise cities win. Madrid or Spain is dropped unless the prompt says them. */
+export function sanitizeCity(prompt: string, city: string): string {
+  const fitted = placeCity(prompt);
+  if (fitted) return fitted;
+  const trimmed = city.trim();
+  if (!trimmed) return "";
+  if (UNSOLICITED_CITY.test(trimmed) && !UNSOLICITED_CITY.test(prompt)) return "";
+  return trimmed.slice(0, 80);
+}
+
+export function proposalSummary(proposal: Proposal): string {
+  const names = [...proposal.works.map((work) => work.name), ...proposal.people.map((person) => person.name)];
+  const where = proposal.city.trim() || "no location";
+  return `${names.filter(Boolean).join(", ")}; place ${where}`;
+}
+
 export function resolveProposal(prompt: string, model: Proposal | null): Proposal {
   const known = knownProposal(prompt);
   if (!known) {
@@ -276,10 +309,11 @@ export function resolveProposal(prompt: string, model: Proposal | null): Proposa
       ...base,
       placeQueries: room?.queries ?? base.placeQueries,
       placeTags: room?.tags ?? base.placeTags,
+      city: sanitizeCity(prompt, base.city),
       scene: resolveScene(prompt, model?.scene ?? null),
     };
   }
-  if (!model) return known;
+  if (!model) return { ...known, city: sanitizeCity(prompt, known.city) };
   const rejectTags = unique([...known.rejectTags, ...model.rejectTags.map(clean)]).slice(0, 8);
   const moodTags = unique([...known.moodTags, ...model.moodTags.map(clean)])
     .filter((tag) => !rejectTags.some((reject) => mentions(tag, reject)))
@@ -288,7 +322,7 @@ export function resolveProposal(prompt: string, model: Proposal | null): Proposa
     ...known,
     moodTags,
     rejectTags,
-    city: known.city || model.city,
+    city: sanitizeCity(prompt, known.city || model.city),
     reason: model.reason.trim() || known.reason,
   };
 }

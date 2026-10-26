@@ -77,7 +77,7 @@ The client does not call `/recommendations` or `/recs`.
 1. `gpt-4.1-mini` names the works and the people (`propose_seeds`). For the sample prompts, and for a Tarantino diner or a Bridgerton tea, canonical names win.
 2. `GET /search` confirms those names. A hit is kept only when it is that name. Blade Runner 2049 is not Blade Runner.
 3. `GET /v2/tags` resolves the mood and place words to tag ids. Free text is never sent as a tag URN.
-4. `GET /v2/insights` runs for artists and for places, with `feature.explainability=true`. Place insights also send `filter.tags` (union) and, for Murakami, `filter.location.query=Tokyo`. Place insights are allowed 8 seconds. If that call times out, one shorter call retries with a single tag and no location. Artist insights and search stay on a short budget. A timeout is not retried on its own.
+4. `GET /v2/insights` runs for artists and for places, with `feature.explainability=true`. Place insights also send `filter.tags` (union) and, for Murakami, `filter.location.query=Tokyo`. Place insights are allowed 5 seconds. If that call times out, one shorter call retries with a single tag and no location. Artist insights are allowed 5 seconds. A known prompt does not wait on a second model pass to judge tags. Artist insights and search stay on a short budget. A timeout is not retried on its own.
 
 Calls share a queue of two. A 429 waits on `Retry-After` and is not listed unless the retry fails. Successful reads stay in an in-memory cache for 24 hours. The API key is not part of the cache key, and no Qloo payload is committed.
 
