@@ -60,8 +60,11 @@ npm run lint
 | `OPENAI_API_KEY` | For the agent and the plain comparison | OpenAI. Default model `gpt-4.1-mini`. Set on Vercel Production and Preview. |
 | `ANTHROPIC_API_KEY` | No | Anthropic. Default model `claude-sonnet-4-5`. |
 | `AI_GATEWAY_API_KEY` | No | Vercel AI Gateway. Default model `openai/gpt-4.1-mini`. |
-| `ATMOSPHERE_DISPATCH` | No | `off` (default), `webhook`, `hue`, or `home_assistant`. |
-| `ATMOSPHERE_DISPATCH_AUTO` | No | `true` pushes the palette at the end of a compile. |
+| `ATMOSPHERE_DISPATCH` | No | `off` (default), `webhook`, `hue`, `home_assistant`, or `govee`. A comma list that includes `govee` sends to Govee. |
+| `ATMOSPHERE_DISPATCH_AUTO` | No | `true` pushes the palette at the end of a compile. Ignored for Govee. |
+| `ATMOSPHERE_OWNER_TOKEN` | For Govee | Secret the owner types once. Required before any Govee call. |
+| `GOVEE_API_KEY` | For Govee | Cloud key from the Govee Home app. Server only. |
+| `GOVEE_DEVICES` | No | Optional comma list of device ids or SKUs. Empty means every color bulb. |
 | `DISPATCH_WEBHOOK_URL` | For webhook | Public URL that accepts `POST` JSON. |
 | `HUE_BRIDGE_HOST` | For Hue | Bridge host. Reachable only from the same LAN. |
 | `HUE_USERNAME` | For Hue | Hue API username. |
@@ -127,8 +130,21 @@ Other live rooms from the same Preview pass:
 - **Webhook** works from a public deploy. The body is `{ event: "atrium.atmosphere", palette, tempoBpm, title, prompt, lights }`. `lights` is `{ id, label, color, intensity }[]`.
 - **Philips Hue** `PUT`s `on`, `bri`, and `xy` to `/api/{username}/groups/{id}/action`. The bridge has to be on the same network as the Next.js server. A Vercel deployment cannot see `192.168.x.x`.
 - **Home Assistant** `POST`s `/api/services/light/turn_on` with `rgb_color`. Use a URL the host can reach.
+- **Govee** uses the cloud OpenAPI. See [Real lights (Govee)](#real-lights-govee).
 
 The button always says whether anything was sent. With dispatch off, it returns the payload it would have sent and does not call the network.
+
+## Real lights (Govee)
+
+Govee bulbs are optional. A public demo does not control them unless you set the server env and type the owner token.
+
+1. In the Govee Home app, open Profile, then About Us, then Apply for API Key. That key is `GOVEE_API_KEY`.
+2. Set `ATMOSPHERE_DISPATCH=govee` and `ATMOSPHERE_OWNER_TOKEN` to a long secret you choose. Optionally set `GOVEE_DEVICES` to a comma-separated list of device ids or SKUs. Leave it empty to use every color bulb on the account.
+3. Redeploy. The key and the owner token stay on the server. The page asks for the token in an Owner field and stores it in this browser only.
+4. Compile a room, enter the token, and press **Send to my real lights**. Atrium lists devices at `GET https://openapi.api.govee.com/router/api/v1/user/devices` with header `Govee-API-Key`, then `POST /router/api/v1/device/control` for power, a steady `colorRgb`, and brightness. The scene's primary, secondary, and accent colors are spread across the bulbs. Real bulbs get those steady colors. They do not flicker.
+5. After the call, each bulb shows a chip with its name, a color swatch, and ok or the error. A wrong token, or no token, returns the preview and does not call Govee.
+
+`ATMOSPHERE_DISPATCH_AUTO` does not fire for Govee, so a compile from a stranger cannot change the bulbs. `/api/dispatch` stays rate-limited. A 429 from Govee waits once, then stops that command.
 
 ## Deploy
 
@@ -137,7 +153,7 @@ The demo is a public Vercel app, with no login.
 1. Import the repo as a Next.js project.
 2. Set `QLOO_API_KEY`, `QLOO_API_URL=https://hackathon.api.qloo.com`, and `QLOO_MODE=auto` for Production and Preview.
 3. Set `OPENAI_API_KEY` for Production and Preview. The default model is `gpt-4.1-mini`.
-4. Leave `ATMOSPHERE_DISPATCH=off` unless the target is a public webhook or a public Home Assistant URL.
+4. Leave `ATMOSPHERE_DISPATCH=off` on the public demo. Set `govee` only on a deploy where you also set `GOVEE_API_KEY` and `ATMOSPHERE_OWNER_TOKEN`.
 5. Open a preview, type a prompt or use a sample (Halloween is the first), and read the trace and the comparison. The card leads with the lighting scene, the soundscape, and the screens.
 
 `/api/compile` allows 30 requests per 10 minutes per IP, and 150 across everyone on that server instance. The agent and the plain model run in parallel. The route sets `maxDuration` to 60 seconds. The platform may cap a plan lower than that. `/api/dispatch` stays at 12 per 10 minutes per IP. The limiter is in memory, so it applies per instance. A request body cannot choose the webhook, Hue, or Home Assistant address. `QLOO_API_URL` has to be an `https` host under `qloo.com` or the key is not sent.
@@ -158,6 +174,6 @@ The demo is a public Vercel app, with no login.
 - `lib/qloo` live client, fixture client, response parsing
 - `lib/agent` query splitting, deterministic gather, AI SDK tools, plain-model comparison
 - `lib/atmosphere` zod schema, room plans, and the compiler
-- `lib/dispatch` Hue, Home Assistant, and webhook
+- `lib/dispatch` Hue, Home Assistant, webhook, and Govee
 - `app/api/compile`, `app/api/dispatch`, `app/api/status`
 - `components` room drawing, WebAudio desk, dossier, comparison

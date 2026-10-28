@@ -8,6 +8,7 @@ import { PromptDock } from "@/components/prompt-dock";
 import { RoomFrame } from "@/components/room-canvas";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BulbChips, OwnerTokenField } from "@/components/govee-lights";
 import { roomKicker } from "@/lib/agent/propose";
 import { EXAMPLE_PROMPTS } from "@/lib/examples";
 import { PLANS } from "@/lib/atmosphere/plans";
@@ -17,7 +18,7 @@ type Status = {
   qlooMode: "live" | "mock";
   qlooHost: string;
   llm: { provider: string; model: string } | null;
-  dispatch: { mode: string; auto: boolean; configured: boolean };
+  dispatch: { mode: string; auto: boolean; configured: boolean; needsOwner?: boolean };
 };
 
 type View = "qloo" | "plain";
@@ -108,6 +109,10 @@ export function AtriumApp() {
   const [result, setResult] = useState<RoomPayload | null>(null);
   const [roomPrompt, setRoomPrompt] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
+  const [ownerToken, setOwnerToken] = useState(() => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem("atrium-owner-token") ?? "";
+  });
   const [view, setView] = useState<View>("qloo");
   const touchX = useRef<number | null>(null);
 
@@ -193,9 +198,11 @@ export function AtriumApp() {
     if (!result) return;
     setDispatching(true);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (ownerToken.trim()) headers["X-Atrium-Owner"] = ownerToken.trim();
       const response = await fetch("/api/dispatch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ atmosphere: result.atmosphere }),
       });
       const dispatchResult = await response.json();
@@ -355,6 +362,15 @@ export function AtriumApp() {
               empty={showPlain ? "The plain reading has no cited bed. Sound belongs to the Qloo room." : undefined}
             />
             <div className="max-w-sm space-y-2">
+              {status?.dispatch.needsOwner || result?.dispatch.mode === "govee" ? (
+                <OwnerTokenField
+                  value={ownerToken}
+                  onChange={(value) => {
+                    setOwnerToken(value);
+                    window.localStorage.setItem("atrium-owner-token", value);
+                  }}
+                />
+              ) : null}
               <Button
                 type="button"
                 variant="outline"
@@ -367,8 +383,9 @@ export function AtriumApp() {
               <p className="text-xs leading-5 text-white/60">
                 {result
                   ? dispatchCopy(result)
-                  : "Hue, Home Assistant, or a webhook. Off until you opt in, so a hosted demo never touches a lamp by accident."}
+                  : "Hue, Home Assistant, Govee, or a webhook. Off until you opt in, so a hosted demo never touches a lamp by accident."}
               </p>
+              {result?.dispatch.result?.bulbs ? <BulbChips bulbs={result.dispatch.result.bulbs} /> : null}
             </div>
           </div>
 
@@ -376,7 +393,18 @@ export function AtriumApp() {
         </main>
 
         <aside className="border-t border-white/10 xl:sticky xl:top-0 xl:max-h-full xl:overflow-y-auto xl:border-t-0 xl:border-l">
-          <Dossier result={result} error={error} loading={loading} dispatching={dispatching} onDispatch={sendLights} />
+          <Dossier
+            result={result}
+            error={error}
+            loading={loading}
+            dispatching={dispatching}
+            onDispatch={sendLights}
+            ownerToken={status?.dispatch.needsOwner || result?.dispatch.mode === "govee" ? ownerToken : null}
+            onOwnerToken={(value) => {
+              setOwnerToken(value);
+              window.localStorage.setItem("atrium-owner-token", value);
+            }}
+          />
         </aside>
       </div>
     </div>
@@ -524,6 +552,11 @@ function dispatchCopy(result: RoomPayload): string {
   const dispatch = result.dispatch;
   if (dispatch.result) {
     return `${dispatch.result.dispatched ? "Sent." : "Not sent."} ${dispatch.result.reason}`;
+  }
+  if (dispatch.mode === "govee") {
+    return dispatch.configured
+      ? "Real bulbs get the scene's steady colors. Enter the owner token to send."
+      : "Govee is selected, but the server is missing the API key or the owner token.";
   }
   if (dispatch.mode === "off") {
     const scene = result.atmosphere.room.lightScene;

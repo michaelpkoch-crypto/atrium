@@ -2,6 +2,7 @@
 
 import type { CompileResult } from "@/lib/agent/orchestrate";
 import type { DispatchResult } from "@/lib/dispatch/lights";
+import { BulbChips, OwnerTokenField } from "@/components/govee-lights";
 import { affinityText, typeLabel } from "@/components/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,12 +18,16 @@ export function Dossier({
   loading,
   dispatching,
   onDispatch,
+  ownerToken = null,
+  onOwnerToken,
 }: {
   result: RoomPayload | null;
   error: string | null;
   loading: boolean;
   dispatching: boolean;
   onDispatch: () => void;
+  ownerToken?: string | null;
+  onOwnerToken?: (value: string) => void;
 }) {
   if (!result && !error) {
     return (
@@ -44,7 +49,15 @@ export function Dossier({
           {error}
         </p>
       ) : null}
-      {result ? <RoomDossier result={result} dispatching={dispatching} onDispatch={onDispatch} /> : null}
+      {result ? (
+        <RoomDossier
+          result={result}
+          dispatching={dispatching}
+          onDispatch={onDispatch}
+          ownerToken={ownerToken}
+          onOwnerToken={onOwnerToken}
+        />
+      ) : null}
     </div>
   );
 }
@@ -53,10 +66,14 @@ function RoomDossier({
   result,
   dispatching,
   onDispatch,
+  ownerToken = null,
+  onOwnerToken,
 }: {
   result: RoomPayload;
   dispatching: boolean;
   onDispatch: () => void;
+  ownerToken?: string | null;
+  onOwnerToken?: (value: string) => void;
 }) {
   const { atmosphere, graph, trace, agent, dispatch } = result;
   const mock = atmosphere.provenance.source === "mock";
@@ -242,10 +259,12 @@ function RoomDossier({
         <p className="font-mono text-[10px] tracking-[0.22em] text-white/75 uppercase">Lights</p>
         <p className="text-xs leading-5 text-white/70">
           Dispatch is {dispatch.mode}
-          {dispatch.configured ? " and configured" : ""}. {dispatch.auto ? "Auto-send is on." : "Auto-send is off."} A Hue
-          bridge on a local network is not reachable from a hosted demo; use a public webhook or Home Assistant URL for
-          that.
+          {dispatch.configured ? " and configured" : ""}. {dispatch.auto ? "Auto-send is on." : "Auto-send is off."}{" "}
+          {dispatch.mode === "govee"
+            ? "Real bulbs get the scene's steady colors. A public visitor cannot send without the owner token."
+            : "A Hue bridge on a local network is not reachable from a hosted demo; use a public webhook or Home Assistant URL for that."}
         </p>
+        {ownerToken != null && onOwnerToken ? <OwnerTokenField value={ownerToken} onChange={onOwnerToken} /> : null}
         <Button
           type="button"
           variant="outline"
@@ -260,6 +279,7 @@ function RoomDossier({
             {dispatch.result.dispatched ? "Sent." : "Not sent."} {dispatch.result.reason}
           </p>
         ) : null}
+        {dispatch.result?.bulbs ? <BulbChips bulbs={dispatch.result.bulbs} /> : null}
       </div>
 
       <details className="text-xs">
