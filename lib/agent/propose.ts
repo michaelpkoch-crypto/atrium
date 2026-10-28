@@ -286,10 +286,11 @@ export function knownProposal(prompt: string): Proposal | null {
   else if (/bridgerton/.test(text)) base = BRIDGERTON;
   if (!base) return null;
   const room = statedRoom(prompt);
-  if (!room) return base;
-  // Basement and Tavern name the room on the card. They do not replace an arcade or a pub.
-  if (base.placeQueries.length && (room.label === "Basement" || room.label === "Tavern")) return base;
-  return { ...base, placeQueries: room.queries, placeTags: room.tags };
+  const proposal =
+    !room || (base.placeQueries.length && (room.label === "Basement" || room.label === "Tavern"))
+      ? base
+      : { ...base, placeQueries: room.queries, placeTags: room.tags };
+  return { ...proposal, city: sanitizeCity(prompt, proposal.city) };
 }
 
 export function genericProposal(prompt: string): Proposal {
@@ -378,6 +379,7 @@ export function eraFromPrompt(prompt: string): Era | null {
  */
 export function placeCity(prompt: string): string | null {
   const text = prompt.toLowerCase();
+  if (/\broad[\s-]?trip\b/.test(text)) return null;
   if (/d[ií]a de los muertos|dia de los muertos|muertos|ofrenda/.test(text)) return "Mexico City";
   if (/stranger things/.test(text)) return "Atlanta";
   if (/\b(lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien)\b/.test(text)) return "Oxford";
@@ -391,6 +393,7 @@ const UNSOLICITED_CITY = /\b(madrid|spain|españa|espana)\b/i;
 
 /** Franchise cities win. Madrid or Spain is dropped unless the prompt says them. */
 export function sanitizeCity(prompt: string, city: string): string {
+  if (/\broad[\s-]?trip\b/i.test(prompt)) return "";
   const fitted = placeCity(prompt);
   if (fitted) return fitted;
   const trimmed = city.trim();

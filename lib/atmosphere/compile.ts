@@ -277,7 +277,7 @@ const FURNITURE: Record<string, { x: number; y: number }> = {
   console: { x: 300, y: 520 },
   plant: { x: 1080, y: 545 },
   stool: { x: 520, y: 590 },
-  hearth: { x: 160, y: 500 },
+  hearth: { x: 390, y: 640 },
 };
 
 function roomTitle(seeds: TasteEntity[], tags: TasteTag[], anchor: TasteEntity): string {
@@ -900,11 +900,10 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
   const description = era ? `Era: ${era.label}, from the prompt. ${heard}` : heard;
   const artist = music.find((row) => !row.gap);
   const place = drinks.find((row) => !row.gap);
-  const hero = lights[0];
-  const heroSource = hero.citation.tag ? `the Qloo tag “${hero.citation.tag}” on ${hero.citation.name}` : hero.citation.name;
+  const heroSource = lightCitation.tag ? `the Qloo tag “${lightCitation.tag}” on ${lightCitation.name}` : lightCitation.name;
   const logline = [
-    `The ${prettyKind(hero.kind)} takes its color from ${heroSource}.`,
-    artist ? `${artist.name} sets the tempo at ${tempo} BPM.` : `Qloo returned no artist, so the tempo stays with ${hero.citation.name}.`,
+    `${channel.name} takes its color from ${heroSource}.`,
+    artist ? `${artist.name} sets the tempo at ${tempo} BPM.` : `Qloo returned no artist, so the tempo stays with ${lightCitation.name}.`,
     place ? `${place.venue} sets the counter.` : `Qloo returned no place, so the counter stays empty.`,
   ].join(" ");
 

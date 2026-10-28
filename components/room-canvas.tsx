@@ -1248,14 +1248,21 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
   if (kind === "hearth") {
     return (
       <g>
-        <rect x={x - 48} y={y - 54} width="96" height="60" rx="2" fill="#5c4033" />
-        <rect x={x - 34} y={y - 42} width="68" height="42" fill="#1a120c" />
+        <ellipse cx={x} cy={y + 36} rx="210" ry="58" fill="#e07a2f" opacity="0.28" className="room-flicker" />
+        <ellipse cx={x + 10} cy={y + 22} rx="120" ry="32" fill="#f6d7a2" opacity="0.4" className="room-flicker" />
+        <rect x={x - 96} y={y - 150} width="192" height="168" rx="4" fill="#5c4033" />
+        <rect x={x - 72} y={y - 124} width="144" height="124" fill="#1a120c" />
         <path
-          d={`M${x - 26} ${y} L${x - 16} ${y - 30} L${x - 4} ${y - 12} L${x} ${y - 38} L${x + 8} ${y - 14} L${x + 18} ${y - 32} L${x + 26} ${y}`}
+          d={`M${x - 58} ${y} L${x - 36} ${y - 78} L${x - 12} ${y - 28} L${x} ${y - 96} L${x + 16} ${y - 30} L${x + 40} ${y - 82} L${x + 58} ${y}`}
           fill="#e07a2f"
           className="room-flicker"
         />
-        <rect x={x - 52} y={y - 6} width="104" height="10" fill={fill} />
+        <path
+          d={`M${x - 28} ${y} L${x - 12} ${y - 48} L${x} ${y - 64} L${x + 14} ${y - 46} L${x + 28} ${y}`}
+          fill="#f6d7a2"
+          className="room-flicker"
+        />
+        <rect x={x - 108} y={y - 4} width="216" height="18" rx="2" fill={fill} />
       </g>
     );
   }

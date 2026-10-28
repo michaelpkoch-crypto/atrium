@@ -310,6 +310,8 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.drinks[0]?.venue).toMatch(/Diner|Restaurant|Veselka/);
     expect(result.atmosphere.drinks.map((drink) => drink.venue).join(" ")).not.toMatch(/Sleepy Hollow/);
     expect(result.atmosphere.drinks.map((drink) => drink.name)).toContain("Bottomless coffee");
+    const placeCall = result.trace.find((call) => call.path === "/v2/insights" && call.query["filter.type"] === "urn:entity:place");
+    expect(placeCall?.query["filter.location.query"]).toBeUndefined();
     expect(result.atmosphere.room.timeLabel).toBe("Night");
     expect(result.atmosphere.room.plan).toBe("lounge");
     const cited = JSON.stringify(result.atmosphere.room.lights);
@@ -383,6 +385,7 @@ describe("mock rooms from canonical seeds", () => {
     expect(result.atmosphere.palette.ambient).toBe("#241038");
     expect(result.atmosphere.drinks[0]?.gap).toBe(false);
     expect(result.atmosphere.logline).not.toMatch(/no artist|counter stays empty/);
+    expect(result.atmosphere.logline).toContain(result.atmosphere.room.lightScene.citation.tag ?? "Blacklight");
     expect(result.atmosphere.room.lightScene.citation.name).not.toMatch(/Carpenter|Elfman/);
     const cited = result.atmosphere.room.lights.map((light) => `${light.label} ${light.citation.tag ?? ""}`).join(" ");
     expect(cited).not.toMatch(/Sneaking|House of cards|Half a brain|Bathtub/);
@@ -429,6 +432,9 @@ describe("mock rooms from canonical seeds", () => {
     expect(tavern.atmosphere.room.objects.some((object) => object.kind === "hearth")).toBe(true);
     expect(tavern.graph.artists.map((artist) => artist.name)).toContain("Howard Shore");
     expect(tavern.atmosphere.logline).not.toMatch(/counter stays empty|no artist/);
+    expect(tavern.atmosphere.logline).toContain(tavern.atmosphere.room.lightScene.citation.tag ?? "Hearthfire");
+    const hearth = tavern.atmosphere.room.objects.find((object) => object.kind === "hearth");
+    expect(hearth && hearth.x).toBeGreaterThan(280);
     expect(roomKicker("a Lord of the Rings tavern", tavern.atmosphere.room.plan)).toBe("Tavern");
   });
 
@@ -727,7 +733,10 @@ describe("artist and counter filters", () => {
     expect(resolveProposal("A Stranger Things basement in 1985", null).placeQueries).toEqual(["arcade", "pizza place"]);
     expect(resolveProposal("A Stranger Things basement in 1985", null).city).toBe("Atlanta");
     expect(resolveProposal("a Lord of the Rings tavern", null).city).toBe("Oxford");
-    expect(placeCity("Tarantino road trip diner at 2am")).toBe("Los Angeles");
+    expect(placeCity("Tarantino road trip diner at 2am")).toBeNull();
+    expect(placeCity("Pulp Fiction")).toBe("Los Angeles");
+    expect(sanitizeCity("Tarantino road trip diner at 2am", "Los Angeles")).toBe("");
+    expect(knownProposal("Tarantino road trip diner at 2am")?.city).toBe("");
     expect(placeCity("Día de los Muertos")).toBe("Mexico City");
     expect(placeCity("a quiet kitchen")).toBeNull();
     expect(sanitizeCity("a Wes Anderson brunch", "Madrid")).toBe("");
