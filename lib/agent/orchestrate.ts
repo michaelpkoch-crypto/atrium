@@ -212,7 +212,7 @@ export async function compileFromPrompt(
     agent,
     dispatchPlan: {
       mode: config.dispatch.mode,
-      auto: config.dispatch.auto && config.dispatch.configured,
+      auto: config.dispatch.mode !== "govee" && config.dispatch.auto && config.dispatch.configured,
       configured: config.dispatch.configured,
     },
     warnings: liveWarnings(client, graph),

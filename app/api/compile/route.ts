@@ -42,7 +42,7 @@ export async function POST(request: Request) {
         });
         const config = readConfig();
         const dispatchResult =
-          config.dispatch.auto && config.dispatch.configured
+          config.dispatch.auto && config.dispatch.configured && config.dispatch.mode !== "govee"
             ? await dispatchAtmosphere(result.atmosphere, config)
             : null;
         send({
