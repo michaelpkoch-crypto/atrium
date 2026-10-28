@@ -28,7 +28,8 @@ export type ObjectKind =
   | "console"
   | "shelf"
   | "rug"
-  | "teapot";
+  | "teapot"
+  | "hearth";
 
 export type ObjectRole = "place" | "brand" | "book" | "artist" | "any";
 

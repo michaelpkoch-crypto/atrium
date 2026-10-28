@@ -5,6 +5,7 @@ import {
   chooseSignalTags,
   counterRejected,
   dedupeByName,
+  aestheticTag,
   offVibe,
   placeFits,
   rankCounterPlaces,
@@ -14,9 +15,8 @@ import {
   type Proposal,
   type WorkKind,
 } from "@/lib/agent/propose";
-import { matchFamily } from "@/lib/atmosphere/families";
 import { keepInsightRows, rankInsightArtists } from "@/lib/agent/rank";
-import type { InsightTarget, TasteClient, TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
+import type { TasteClient, TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
 
 const WORK_TYPE: Record<WorkKind, string> = {
   movie: "urn:entity:movie",
@@ -43,36 +43,21 @@ export async function assembleGraph(
   if (!found.seeds.length && !found.tags.length && !found.places.length) return null;
 
   const entityIds = found.seeds.map((seed) => seed.id);
-  const artistIds = artistSignalIds(found.seeds);
   const tagIds = found.tags.map((tag) => tag.id);
   const placeTagIds = found.placeTags.map((tag) => tag.id);
   const buckets = emptyBuckets();
 
   // Artists and places are the rows a judge looks for. Brands, books, and movies are already
-  // the seeds, so they do not get their own insights call. Artist neighbors are asked from the
-  // music seeds (and the film or show). The person stays on the place call.
-  const targets: InsightTarget[] = ["urn:entity:artist", "urn:entity:place"];
-  await Promise.all(
-    targets.map(async (filterType) => {
-      try {
-        const place = filterType === "urn:entity:place";
-        const result = place
-          ? await placeInsights(client, proposal.city, entityIds, placeTagIds)
-          : await client.insights({
-              filterType,
-              entityIds: artistIds,
-              tagIds: [],
-              take: 4,
-              timeoutMs: 5_000,
-            });
-        if (!result) return;
-        const key = keyFor(filterType);
-        buckets[key] = result.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
-      } catch {
-        // The client recorded the failure. A place search from the proposal fills an empty venue list.
-      }
-    }),
-  );
+  // the seeds, so they do not get their own insights call. Place insights use the seeds and,
+  // when the prompt has a city, the location. They do not send filter.tags.
+  const [artistPull, placePull] = await Promise.all([
+    pullArtists(client, found.seeds, tagIds),
+    placeInsights(client, proposal.city, entityIds),
+  ]);
+  buckets.artists = artistPull.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
+  if (placePull) {
+    buckets.places = placePull.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
+  }
 
   for (const key of Object.keys(buckets) as (keyof typeof buckets)[]) {
     buckets[key] = keepInsightRows(buckets[key]);
@@ -135,7 +120,7 @@ export async function assembleGraph(
   steps.push({
     why: "Each artist line names the token and the entity that kept or dropped it.",
     call: "rank_artists",
-    detail: `${artistSignalNote(found.seeds)} ${artistInsights?.cached ? "Cached insights, then ranked." : "Ranked after insights."}`,
+    detail: `${artistPull.note} ${artistInsights?.cached ? "Cached insights, then ranked." : "Ranked after insights."}`,
     result: artistLines || "none",
   });
   buckets.movies = mergeAffinity([...found.movies, ...buckets.movies]);
@@ -150,13 +135,13 @@ export async function assembleGraph(
     steps.push({
       why:
         key === "places"
-          ? `Which places sit next to ${seedNames}. Place results are limited to ${proposal.placeTags.join(", ") || "the place categories"}${proposal.city ? ` in ${proposal.city}` : ""}.`
-          : artistSignalNote(found.seeds),
+          ? `Which places sit next to ${seedNames}.${proposal.city ? ` Location ${proposal.city}.` : ""} Place insights do not send filter.tags.`
+          : artistPull.note,
       call: "GET /v2/insights",
       detail:
         key === "places"
-          ? `filter.type=${filterType}; filter.tags; signal.interests.entities${proposal.city ? "; filter.location.query" : ""}`
-          : `filter.type=${filterType}; signal.interests.entities=${artistIds.join(",") || "none"}`,
+          ? `filter.type=${filterType}; signal.interests.entities${proposal.city ? "; filter.location.query" : ""}`
+          : artistPull.detail,
       result: buckets[key].map((entity) => entity.name).slice(0, 4).join(", ") || "no rows",
     });
   }
@@ -187,19 +172,15 @@ function calm(entity: TasteEntity, proposal: Proposal): TasteEntity {
   return { ...entity, tags: tagsForRoom(entity.tags, proposal) };
 }
 
-/** Mood tags win. When none of them carry a color, the seed's own aesthetic tags fill the lamps. */
+/** Mood tags that are also short aesthetic words. Plot sentences stay off the lamps. */
 function roomTags(found: TasteTag[], seeds: TasteEntity[], proposal: Proposal): TasteTag[] {
-  const kept = found.filter((tag) => tagFitsMood(tag.name, proposal));
-  if (kept.some((tag) => matchFamily(tag.name))) return kept.slice(0, 6);
-  const extra: TasteTag[] = [];
+  const pool = [...found];
   for (const seed of seeds) {
     for (const tag of seed.tags) {
-      if (!matchFamily(tag.name)) continue;
-      if (extra.some((item) => item.id === tag.id) || kept.some((item) => item.id === tag.id)) continue;
-      extra.push(tag);
+      if (!pool.some((item) => item.id === tag.id)) pool.push(tag);
     }
   }
-  return [...kept, ...extra].slice(0, 6);
+  return tagsForRoom(pool, proposal).filter((tag) => tagFitsMood(tag.name, proposal) && aestheticTag(tag.name)).slice(0, 6);
 }
 
 async function confirmAll(client: TasteClient, prompt: string, proposal: Proposal, steps: AgentStep[]) {
@@ -253,7 +234,7 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
   }
 
   for (const { person, hits } of personHits) {
-    const hit = hits.find((entity) => confirmsName(person.name, entity.name) && typeFits(entity.type, person.kind));
+    const hit = hits.find((entity) => confirmsName(person.name, entity.name, true) && typeFits(entity.type, person.kind));
     if (!hit) continue;
     pushUnique(seeds, hit);
     if (person.kind === "artist" || hit.type.includes("artist")) pushUnique(artists, hit);
@@ -315,7 +296,7 @@ async function confirmAll(client: TasteClient, prompt: string, proposal: Proposa
     });
   });
 
-  return { seeds: seeds.slice(0, 5), artists, movies, books, places, tags, placeTags };
+  return { seeds: seeds.slice(0, 6), artists, movies, books, places, tags, placeTags };
 }
 
 async function searchBoth(client: TasteClient, query: string, types: string): Promise<TasteEntity[]> {
@@ -368,27 +349,91 @@ async function placeInsights(
   client: TasteClient,
   city: string,
   entityIds: string[],
-  placeTagIds: string[],
 ): Promise<{ entities: TasteEntity[]; tags: TasteTag[] } | null> {
-  const run = (tagIds: string[], location: string | undefined, timeoutMs: number) =>
-    client.insights({
-      filterType: "urn:entity:place",
-      entityIds,
-      tagIds,
-      filterTagIds: tagIds.length ? tagIds : undefined,
-      location,
-      take: 4,
-      timeoutMs,
-    });
+  if (!entityIds.length) return null;
   try {
-    return await run(placeTagIds, city || undefined, 5_000);
+    return await client.insights({
+      filterType: "urn:entity:place",
+      entityIds: entityIds.slice(0, 4),
+      tagIds: [],
+      location: city || undefined,
+      take: 4,
+      timeoutMs: 4_000,
+    });
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Film-inclusive artist insights often come back empty for an occasion.
+ * When no music seed was confirmed, signal the occasion mood tags instead.
+ * A room that already has a music seed does not take that wider tag call.
+ */
+async function pullArtists(
+  client: TasteClient,
+  seeds: TasteEntity[],
+  moodTagIds: string[],
+): Promise<{ entities: TasteEntity[]; note: string; detail: string }> {
+  const music = seeds.filter((seed) => seed.type.includes("artist"));
+  const primary = artistSignalIds(seeds);
+  const musicIds = music.map((seed) => seed.id);
+  let entities: TasteEntity[] = [];
+  let note = artistSignalNote(seeds);
+  let detail = `filter.type=urn:entity:artist; signal.interests.entities=${primary.join(",") || "none"}`;
+  let entityOk = false;
+  if (primary.length) {
     try {
-      return await run(placeTagIds.slice(0, 1), undefined, 2_000);
+      const result = await client.insights({
+        filterType: "urn:entity:artist",
+        entityIds: primary,
+        tagIds: [],
+        take: 4,
+        timeoutMs: 5_000,
+      });
+      entities = result.entities;
+      entityOk = true;
     } catch {
-      return null;
+      // The client recorded the timeout. A tag signal can still name the score.
     }
   }
+  const filmed = musicIds.length > 0 && primary.length > musicIds.length;
+  if (entityOk && !entities.length && filmed) {
+    try {
+      const result = await client.insights({
+        filterType: "urn:entity:artist",
+        entityIds: musicIds,
+        tagIds: [],
+        take: 4,
+        timeoutMs: 3_500,
+      });
+      entities = result.entities;
+      note = "Film-signaled artist insights were empty, so the call used the music seeds only.";
+      detail = `filter.type=urn:entity:artist; signal.interests.entities=${musicIds.join(",")}`;
+    } catch {
+      // The music seeds already on the graph can still fill the band.
+    }
+  }
+  if (!entities.length && !musicIds.length && moodTagIds.length) {
+    const tagIds = moodTagIds.slice(0, 3);
+    try {
+      const result = await client.insights({
+        filterType: "urn:entity:artist",
+        entityIds: [],
+        tagIds,
+        take: 4,
+        timeoutMs: 3_500,
+      });
+      if (result.entities.length) {
+        entities = result.entities;
+        note = "Entity artist insights were empty, so the call signaled the occasion mood tags.";
+        detail = `filter.type=urn:entity:artist; signal.interests.tags=${tagIds.join(",")}`;
+      }
+    } catch {
+      // Search-confirmed music seeds can still fill the band.
+    }
+  }
+  return { entities, note, detail };
 }
 
 /** Music seeds, plus the film or show so a series audience still returns. Never the person or the book. */
@@ -406,14 +451,6 @@ function artistSignalNote(seeds: TasteEntity[]): string {
   return works
     ? "Artist insights signaled the music seeds and the film or show, not the person."
     : "Artist insights signaled the music seeds, not the person.";
-}
-
-function keyFor(filterType: InsightTarget): "artists" | "places" | "brands" | "books" | "movies" {
-  if (filterType === "urn:entity:artist") return "artists";
-  if (filterType === "urn:entity:place") return "places";
-  if (filterType === "urn:entity:brand") return "brands";
-  if (filterType === "urn:entity:book") return "books";
-  return "movies";
 }
 
 const GENERIC_TAG = new Set(["cafe", "bar", "club", "cocktail", "shop", "place", "restaurant", "room"]);

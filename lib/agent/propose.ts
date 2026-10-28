@@ -1,5 +1,5 @@
 import { placeQueries, tagQueriesFor, tokens } from "@/lib/agent/queries";
-import { matchFamily, type WindowScene } from "@/lib/atmosphere/families";
+import { FAMILIES, type WindowScene } from "@/lib/atmosphere/families";
 import type { TasteEntity, TasteTag } from "@/lib/qloo/types";
 
 export type WorkKind = "movie" | "tv" | "book";
@@ -34,8 +34,8 @@ const HALLOWEEN: Proposal = {
     { name: "John Carpenter", kind: "artist" },
     { name: "Danny Elfman", kind: "artist" },
   ],
-  placeQueries: ["cocktail bar"],
-  placeTags: ["halloween"],
+  placeQueries: ["haunted house", "pumpkin patch", "cocktail bar"],
+  placeTags: ["halloween", "bar"],
   moodTags: ["horror", "spooky", "halloween"],
   rejectTags: ["jazz", "pastel", "brunch"],
   city: "",
@@ -45,17 +45,22 @@ const HALLOWEEN: Proposal = {
 
 const CHRISTMAS: Proposal = {
   works: [
-    { name: "It's a Wonderful Life", kind: "movie" },
+    { name: "Home Alone", kind: "movie" },
     { name: "A Charlie Brown Christmas", kind: "tv" },
+    { name: "It's a Wonderful Life", kind: "movie" },
   ],
-  people: [{ name: "Vince Guaraldi", kind: "artist" }],
+  people: [
+    { name: "John Williams", kind: "artist" },
+    { name: "Vince Guaraldi", kind: "artist" },
+    { name: "Mariah Carey", kind: "artist" },
+  ],
   placeQueries: ["holiday market"],
   placeTags: ["christmas", "holiday"],
   moodTags: ["christmas", "holiday"],
   rejectTags: ["horror", "noir"],
   city: "",
   scene: { time: "day", weather: "clear", brightness: "bright" },
-  reason: "Christmas morning means It's a Wonderful Life, A Charlie Brown Christmas, and Vince Guaraldi.",
+  reason: "Christmas morning means Home Alone, A Charlie Brown Christmas, It's a Wonderful Life, John Williams, Vince Guaraldi, and Mariah Carey.",
 };
 
 const MUERTOS: Proposal = {
@@ -187,6 +192,33 @@ const MURAKAMI: Proposal = {
   reason: "Murakami means the novels and a jazz kissa, not a landmark or a thermal bath.",
 };
 
+const STRANGER: Proposal = {
+  works: [{ name: "Stranger Things", kind: "tv" }],
+  people: [
+    { name: "Kyle Dixon", kind: "artist" },
+    { name: "Michael Stein", kind: "artist" },
+  ],
+  placeQueries: ["arcade", "pizza place"],
+  placeTags: ["arcade", "retro"],
+  moodTags: ["neon", "retro"],
+  rejectTags: ["tavern", "jazz"],
+  city: "Atlanta",
+  scene: { time: "night", weather: "clear", brightness: "dim" },
+  reason: "Stranger Things means the show, Kyle Dixon, Michael Stein, and a named arcade or pizza place in Atlanta. The basement is the room, not a venue called Tavern.",
+};
+
+const LOTR: Proposal = {
+  works: [{ name: "The Lord of the Rings", kind: "movie" }],
+  people: [{ name: "Howard Shore", kind: "artist" }],
+  placeQueries: ["pub", "inn"],
+  placeTags: ["pub"],
+  moodTags: ["fantasy", "fire", "hearth"],
+  rejectTags: ["neon", "diner"],
+  city: "Oxford",
+  scene: { time: "night", weather: "clear", brightness: "dim" },
+  reason: "A Lord of the Rings tavern means the film, Howard Shore, and a pub that pours mead. A place named only Tavern is not a venue.",
+};
+
 type StatedRoom = { label: string; queries: string[]; tags: string[] };
 
 const STATED_ROOMS: { test: RegExp; room: StatedRoom }[] = [
@@ -215,8 +247,11 @@ export function statedRoom(prompt: string): StatedRoom | null {
  * The floor-plan id (bath, lounge) is not a title.
  */
 export function roomKicker(prompt: string, plan: string, placeHint = ""): string {
+  const text = prompt.toLowerCase();
   const stated = statedRoom(prompt);
   if (stated) return stated.label;
+  if (/christmas/.test(text) && /\bmorning\b/.test(text)) return "Morning";
+  if (/christmas/.test(text)) return "Living room";
   const blob = fold(`${placeHint} ${plan}`).toLowerCase();
   if (/\b(kissaten|kissa)\b/.test(blob)) return "Kissaten";
   if (/\bdiner\b/.test(blob)) return "Diner";
@@ -228,7 +263,7 @@ export function roomKicker(prompt: string, plan: string, placeHint = ""): string
   if (plan === "lounge") return "Lounge";
   if (plan === "neon") return "Night";
   if (plan === "symmetry") return "Day";
-  if (plan === "rain") return "Rain";
+  if (plan === "rain" && /\b(rain|rainy|storm|drizzle)\b/.test(text)) return "Rain";
   if (plan === "brutalist") return "Concrete";
   return "Room";
 }
@@ -241,6 +276,8 @@ export function knownProposal(prompt: string): Proposal | null {
   else if (/christmas/.test(text)) base = CHRISTMAS;
   else if (/d[ií]a de los muertos|dia de los muertos|muertos|ofrenda/.test(text)) base = MUERTOS;
   else if (/super bowl|halftime/.test(text)) base = SUPER_BOWL;
+  else if (/stranger things|upside down/.test(text)) base = STRANGER;
+  else if (/\b(lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien)\b/.test(text)) base = LOTR;
   else if (/ghibli|spirited away|miyazaki|hisaishi/.test(text)) base = GHIBLI;
   else if (/blade runner/.test(text)) base = BLADE;
   else if (/wes anderson|grand budapest|tenenbaums/.test(text)) base = WES;
@@ -250,6 +287,8 @@ export function knownProposal(prompt: string): Proposal | null {
   if (!base) return null;
   const room = statedRoom(prompt);
   if (!room) return base;
+  // Basement and Tavern name the room on the card. They do not replace an arcade or a pub.
+  if (base.placeQueries.length && (room.label === "Basement" || room.label === "Tavern")) return base;
   return { ...base, placeQueries: room.queries, placeTags: room.tags };
 }
 
@@ -395,16 +434,19 @@ export function resolveProposal(prompt: string, model: Proposal | null): Proposa
 
 const NAME_STOP = new Set(["the", "a", "an", "and", "of"]);
 
-export function confirmsName(query: string, name: string): boolean {
+export function confirmsName(query: string, name: string, loose = false): boolean {
   const q = query.toLowerCase().trim();
   const n = name.toLowerCase().trim();
   if (!q || !n) return false;
   if (q === n) return true;
   const qt = tokens(q).filter((token) => !NAME_STOP.has(token));
-  const nt = tokens(n);
-  if (qt.length < 2 || !qt.every((token) => nt.includes(token))) return false;
-  const extra = nt.filter((token) => !qt.includes(token) && !NAME_STOP.has(token));
-  return extra.length === 0;
+  const nt = tokens(n).filter((token) => !NAME_STOP.has(token));
+  if (!qt.length || !qt.every((token) => nt.includes(token))) return false;
+  if (!loose && qt.length < 2) return false;
+  const extra = nt.filter((token) => !qt.includes(token));
+  if (extra.length === 0) return true;
+  if (!loose) return false;
+  return nt.join(" ").startsWith(qt.join(" "));
 }
 
 const GENERIC_PLACE = new Set([
@@ -519,6 +561,11 @@ const BARE_CATEGORY = new Set([
   "shop",
   "kitchen",
   "house",
+  "tavern",
+  "pub",
+  "inn",
+  "alehouse",
+  "arcade",
 ]);
 
 /** "Patisserie" or "American Diner" is the category, not a venue. A longer name is specific. */
@@ -530,8 +577,15 @@ export function bareCategoryPlace(name: string): boolean {
 const POURER =
   /\b(restaurantes?|restaurants?|cafes?|coffee|bars?|taverns?|cantinas?|bistros?|diners?|pubs?|lounges?|kitchens?|eateries|grills?)\b/i;
 
+const OFF_THEME_PLACE = /\bsky garden\b|\bmajorelle\b|\bjardin majorelle\b/i;
+
+/** Sky Garden and Jardin Majorelle read as tourist gardens, not a Bridgerton tea. */
+export function offThemePlace(name: string): boolean {
+  return OFF_THEME_PLACE.test(name);
+}
+
 function counterScore(place: TasteEntity, services: Service[]): number {
-  if (counterRejected(place.name)) return -1;
+  if (counterRejected(place.name) || offThemePlace(place.name)) return -1;
   if (!services.includes("bath") && /\b(onsen|sento|bathhouse|bath house|day spa|hot spring)\b/i.test(fold(place.name))) return -1;
   const name = fold(place.name);
   const tags = fold(place.tags.map((tag) => humanizeTagName(tag.name)).join(" "));
@@ -559,8 +613,7 @@ export function rankCounterPlaces(places: TasteEntity[], proposal: Proposal): Ta
     (a, b) => b.score - a.score || (b.place.affinity ?? -1) - (a.place.affinity ?? -1) || a.place.name.localeCompare(b.place.name),
   );
   const unique = dedupeByName(ranked.map((row) => row.place));
-  const specific = unique.filter((place) => !bareCategoryPlace(place.name));
-  return specific.length ? specific : unique;
+  return unique.filter((place) => !bareCategoryPlace(place.name));
 }
 
 const GENERIC_CATEGORY = new Set([
@@ -594,6 +647,13 @@ const PLACE_SYNONYMS: Record<string, string[]> = {
   "tea room": ["tea house", "garden cafe"],
   "tea house": ["tea room", "garden cafe"],
   garden: ["tea room", "garden cafe"],
+  "cocktail bar": ["cocktail lounge", "haunted house"],
+  "haunted house": ["pumpkin patch", "cocktail bar"],
+  "pumpkin patch": ["haunted house", "cocktail bar"],
+  pub: ["inn", "public house"],
+  inn: ["pub"],
+  arcade: ["pizza place", "diner"],
+  "pizza place": ["arcade", "pizzeria"],
 };
 
 /** Tried only after the specific place search and place insights come back empty. */
@@ -613,7 +673,7 @@ export function broaderPlaceQueries(queries: string[]): string[] {
 }
 
 export function placeFits(place: TasteEntity, proposal: Proposal, prompt: string): boolean {
-  if (promptEchoPlace(place.name, prompt) || isLandmark(place.name) || genericVenueName(place.name)) return false;
+  if (promptEchoPlace(place.name, prompt) || isLandmark(place.name) || genericVenueName(place.name) || offThemePlace(place.name)) return false;
   const blob = `${place.name} ${place.tags.map((tag) => humanizeTagName(tag.name)).join(" ")}`;
   const categories = [...proposal.placeTags, ...proposal.placeQueries].map(clean).filter(Boolean);
   if (!categories.length) return true;
@@ -645,20 +705,55 @@ export function tagFitsMood(name: string, proposal: Proposal): boolean {
   return allowed.some((mood) => moodMatch(human, mood) || tokens(mood).some((token) => token.length > 3 && tokens(human).includes(token)));
 }
 
+const AESTHETIC = new Set<string>([
+  ...FAMILIES.flatMap((family) => family.stems),
+  "horror",
+  "spooky",
+  "halloween",
+  "christmas",
+  "holiday",
+  "football",
+  "sports",
+  "party",
+  "folk",
+  "marigold",
+  "ofrenda",
+  "hearth",
+  "fire",
+  "fantasy",
+  "regency",
+  "romance",
+  "tavern",
+  "pub",
+  "arcade",
+  "pizza",
+  "retro",
+  "soundtrack",
+  "score",
+]);
+
+const AESTHETIC_STOP = new Set(["the", "a", "an", "and", "of", "on", "in", "out", "to", "for"]);
+
 /**
- * Tags that may color a lamp. Mood matches stay. When those matches have no color prior,
- * the entity's own aesthetic tags (neon, retro, crime) are kept so the room is not a hashed blue.
- * Rejected vibes never come back.
+ * A fixture tag has to be a short mood or aesthetic word.
+ * "Horror" stays. "Sneaking out of the house", "Bathtub", and "Half a brain" do not.
+ */
+export function aestheticTag(name: string): boolean {
+  const human = humanizeTagName(name).toLowerCase().trim();
+  if (!human) return false;
+  if (AESTHETIC.has(human)) return true;
+  const words = tokens(human).filter((word) => word.length > 1 && !AESTHETIC_STOP.has(word));
+  if (!words.length || words.length > 3) return false;
+  return words.every((word) => AESTHETIC.has(word));
+}
+
+/**
+ * Tags that may color a lamp. The tag has to fit the prompt's mood and be an aesthetic word.
+ * A plot sentence that happens to contain "house" or "bath" is left out.
  */
 export function tagsForRoom(tags: TasteTag[], proposal: Proposal): TasteTag[] {
-  const kept = tags.filter((tag) => tagFitsMood(tag.name, proposal));
-  const picked = kept.some((tag) => matchFamily(tag.name))
-    ? kept
-    : [
-        ...kept,
-        ...tags.filter((tag) => !kept.some((item) => item.id === tag.id) && !rejectedTag(tag.name, proposal) && matchFamily(tag.name)),
-      ];
-  return uniqueTags(picked).slice(0, 8);
+  const kept = tags.filter((tag) => tagFitsMood(tag.name, proposal) && aestheticTag(tag.name));
+  return uniqueTags(kept).slice(0, 8);
 }
 
 function uniqueTags(tags: TasteTag[]): TasteTag[] {
@@ -671,11 +766,6 @@ function uniqueTags(tags: TasteTag[]): TasteTag[] {
     out.push(tag);
   }
   return out;
-}
-
-function rejectedTag(name: string, proposal: Proposal): boolean {
-  const human = humanizeTagName(name);
-  return proposal.rejectTags.some((reject) => mentions(human, reject) || mentions(name, reject));
 }
 
 /** A tag is kept only when it is one of the moods or place categories the proposal named. */

@@ -233,7 +233,7 @@ export function matchFamily(name: string): Family | null {
   let best: { family: Family; length: number } | null = null;
   for (const family of FAMILIES) {
     for (const stem of family.stems) {
-      const hit = words.has(stem) || (stem.length >= 4 && text.includes(stem));
+      const hit = stem.includes("-") || stem.includes(" ") ? text.includes(stem) : words.has(stem);
       if (!hit) continue;
       if (!best || stem.length > best.length) best = { family, length: stem.length };
     }

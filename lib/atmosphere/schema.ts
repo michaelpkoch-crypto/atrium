@@ -66,6 +66,7 @@ export const objectKindSchema = z.enum([
   "shelf",
   "rug",
   "teapot",
+  "hearth",
 ]);
 export const textureKindSchema = z.enum(["rain", "vinyl", "water", "crowd", "air", "steam", "tape"]);
 export const lightEffectSchema = z.enum(["flicker", "pulse", "lightning", "candle", "neon"]);

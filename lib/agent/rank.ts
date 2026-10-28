@@ -139,6 +139,20 @@ const COUNTABLE = new Set([
   "bathhouse",
   "steam",
   "hojicha",
+  "horror",
+  "spooky",
+  "halloween",
+  "christmas",
+  "holiday",
+  "folk",
+  "sports",
+  "football",
+  "soundtrack",
+  "fantasy",
+  "marigold",
+  "party",
+  "fire",
+  "hearth",
 ]);
 
 export type ArtistRankRow = {

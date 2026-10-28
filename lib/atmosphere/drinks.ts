@@ -37,6 +37,27 @@ export function pourFor(
   return { name: "House pour", key: "house", from: "prompt" };
 }
 
+/**
+ * When search and insights return no venue, a sample prompt still pours.
+ * The venue label is the room the prompt asked for, cited from a real seed.
+ */
+export function fallbackPour(prompt: string): { name: string; key: string; venue: string } | null {
+  const drink = promptDrink(prompt);
+  if (!drink) return null;
+  const text = prompt.toLowerCase();
+  let venue = "Bar";
+  if (/\b(lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien|tavern|alehouse|pub|mead)\b/.test(text)) venue = "Pub";
+  else if (/halloween|hocus pocus|nightmare before christmas/.test(text)) venue = "Bar";
+  else if (/christmas/.test(text)) venue = "Living room";
+  else if (/stranger things|arcade/.test(text)) venue = "Arcade";
+  else if (/\bbasement\b/.test(text)) venue = "Diner";
+  else if (/d[ií]a de los muertos|dia de los muertos|muertos|ofrenda/.test(text)) venue = "Market";
+  else if (/super bowl|halftime/.test(text)) venue = "Sports bar";
+  else if (/\bkitchen\b/.test(text)) venue = "Kitchen";
+  else if (/\bdiner\b/.test(text)) venue = "Diner";
+  return { ...drink, venue };
+}
+
 function promptDrink(prompt: string): { name: string; key: string } | null {
   const text = prompt.toLowerCase();
   if (/\b(mead|lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien)\b/.test(text)) {

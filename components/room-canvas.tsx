@@ -1245,6 +1245,20 @@ function ObjectShape({ kind, x, y, fill, accent }: { kind: RoomObject["kind"]; x
       </g>
     );
   }
+  if (kind === "hearth") {
+    return (
+      <g>
+        <rect x={x - 48} y={y - 54} width="96" height="60" rx="2" fill="#5c4033" />
+        <rect x={x - 34} y={y - 42} width="68" height="42" fill="#1a120c" />
+        <path
+          d={`M${x - 26} ${y} L${x - 16} ${y - 30} L${x - 4} ${y - 12} L${x} ${y - 38} L${x + 8} ${y - 14} L${x + 18} ${y - 32} L${x + 26} ${y}`}
+          fill="#e07a2f"
+          className="room-flicker"
+        />
+        <rect x={x - 52} y={y - 6} width="104" height="10" fill={fill} />
+      </g>
+    );
+  }
   if (kind === "plant") {
     return (
       <g>

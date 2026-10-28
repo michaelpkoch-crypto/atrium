@@ -1,10 +1,10 @@
 import { bedPhrase, channelScene, displayEffectFor, lightFlicker, type ScreenKind } from "@/lib/atmosphere/channels";
 import { hslToHex, hashString, mixHex } from "@/lib/atmosphere/color";
 import { audienceLine } from "@/lib/atmosphere/baseline";
-import { pourFor } from "@/lib/atmosphere/drinks";
+import { fallbackPour, pourFor } from "@/lib/atmosphere/drinks";
 import { eraAmbient, eraChipLabel, eraCitation, forceGlobe, gradeHex } from "@/lib/atmosphere/era";
 import { matchFamily, type Family, type LightBias, type PlanId, type ScaleName, type TextureKind, type WindowScene } from "@/lib/atmosphere/families";
-import { eraFromPrompt, labelForScene, sceneFromPrompt, type Era, type SceneMood } from "@/lib/agent/propose";
+import { aestheticTag, bareCategoryPlace, eraFromPrompt, labelForScene, offThemePlace, sceneFromPrompt, type Era, type SceneMood } from "@/lib/agent/propose";
 import { PLANS, type ObjectKind, type ObjectRole, type ObjectSlot } from "@/lib/atmosphere/plans";
 import { atmosphereSchema, type Atmosphere, type Citation, type VisualMode } from "@/lib/atmosphere/schema";
 import type { TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
@@ -163,10 +163,12 @@ function collectSignals(pool: TasteEntity[], tags: TasteTag[], seedIds: Set<stri
   };
 
   for (const entity of pool) {
-    if (!entity.tags.length) consider(entity, null, entity.affinity);
-    for (const tag of entity.tags) consider(entity, tag, entity.affinity);
+    const aesthetic = entity.tags.filter((tag) => aestheticTag(tag.name));
+    if (!aesthetic.length) consider(entity, null, entity.affinity);
+    for (const tag of aesthetic) consider(entity, tag, entity.affinity);
   }
   for (const tag of tags) {
+    if (!aestheticTag(tag.name)) continue;
     const host = pool.find((entity) => entity.tags.some((item) => item.id === tag.id)) ?? pool[0];
     if (host) consider(host, tag, tag.affinity ?? host.affinity);
   }
@@ -275,6 +277,7 @@ const FURNITURE: Record<string, { x: number; y: number }> = {
   console: { x: 300, y: 520 },
   plant: { x: 1080, y: 545 },
   stool: { x: 520, y: 590 },
+  hearth: { x: 160, y: 500 },
 };
 
 function roomTitle(seeds: TasteEntity[], tags: TasteTag[], anchor: TasteEntity): string {
@@ -367,8 +370,15 @@ function inhabitRoom(
       args.place.name,
       cite(args.place, `${args.place.name} sets out ${args.drinkName}.`, "tea"),
     );
-  } else if (args.place && args.drinkName && !objects.some((object) => object.kind === "bottle" || object.kind === "bar" || object.kind === "cup")) {
-    add("bottle", args.place.name, cite(args.place, `${args.place.name} stocks the counter with ${args.drinkName}.`, null));
+  } else if (args.drinkName && !objects.some((object) => object.kind === "bottle" || object.kind === "bar" || object.kind === "cup")) {
+    const host = args.place ?? args.anchor;
+    add("bottle", args.place?.name ?? args.drinkName, cite(host, `${host.name} stocks the counter with ${args.drinkName}.`, null));
+  }
+
+  if (/\b(fire|fireplace|hearth|tavern|alehouse|lotr|lord of the rings|hobbit|tolkien|middle-earth|middle earth)\b/.test(text)) {
+    const host = args.work ?? args.anchor;
+    const tag = host.tags.find((item) => aestheticTag(item.name))?.name ?? null;
+    add("hearth", "Fireplace", cite(host, `${host.name} sets a hearth. The prompt is a fire or a tavern.`, tag));
   }
 
   if (args.artist && !objects.some((object) => object.kind === "record" || object.kind === "speaker")) {
@@ -415,7 +425,16 @@ function inhabitRoom(
 
 function hostForChannel(tags: string[], pool: TasteEntity[], anchor: TasteEntity): TasteEntity {
   const wanted = new Set(tags.map((tag) => tag.toLowerCase()));
-  return pool.find((entity) => entity.tags.some((tag) => wanted.has(tag.name.toLowerCase()))) ?? anchor;
+  const carries = (entity: TasteEntity) =>
+    entity.tags.some((tag) => wanted.has(tag.name.toLowerCase()) && aestheticTag(tag.name));
+  const rank = (entity: TasteEntity) => {
+    if (/movie|tv_show|book|place/.test(entity.type)) return 0;
+    if (/artist|person/.test(entity.type)) return 2;
+    return 1;
+  };
+  const found = pool.filter(carries).sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  if (found[0]) return found[0];
+  return pool.find((entity) => !/artist|person/.test(entity.type)) ?? anchor;
 }
 
 function safeImage(url: string | null): string | null {
@@ -483,7 +502,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     return byAffinity(a, b);
   });
   // Counter rank is category fit, then affinity. Sorting again by affinity puts a cocktail bar ahead of a tea room.
-  const places = dedupe(graph.places);
+  const places = dedupe(graph.places).filter((place) => !offThemePlace(place.name) && !bareCategoryPlace(place.name));
   const brands = dedupe(graph.brands).sort(byAffinity);
   const books = dedupe([...graph.books, ...seeds.filter((seed) => seed.type.includes("book"))]).sort(byAffinity);
   const movies = dedupe(graph.movies)
@@ -558,7 +577,7 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     const slot = openSlots.find((item) => !item.used) ?? openSlots[draft.length % openSlots.length];
     if (slot) slot.used = true;
     const kind = slot?.slot.kind ?? "pendant";
-    const nextTag = lead.entity.tags.map((tag) => tag.name).find((name) => !usedTags.has(name.toLowerCase())) ?? null;
+    const nextTag = lead.entity.tags.map((tag) => tag.name).find((name) => aestheticTag(name) && !usedTags.has(name.toLowerCase())) ?? null;
     if (nextTag) usedTags.add(nextTag.toLowerCase());
     const citation = cite(
       lead.entity,
@@ -828,16 +847,30 @@ export function compileAtmosphere(prompt: string, graph: TasteGraph): Atmosphere
     if (drinks.length >= 3) break;
   }
   if (!drinks.length) {
-    const because = "Qloo returned no place, so the counter stays empty.";
-    drinks.push({
-      name: "Counter unset",
-      venue: "Place search returned nothing",
-      venueId: anchor.id,
-      affinity: null,
-      because,
-      citation: cite(anchor, because, null),
-      gap: true,
-    });
+    const fallback = fallbackPour(prompt);
+    if (fallback) {
+      const because = `Qloo returned no venue, so the counter pours ${fallback.name}. The pour follows the prompt.`;
+      drinks.push({
+        name: fallback.name,
+        venue: fallback.venue,
+        venueId: anchor.id,
+        affinity: null,
+        because,
+        citation: cite(anchor, because, fallback.key),
+        gap: false,
+      });
+    } else {
+      const because = "Qloo returned no place, so the counter stays empty.";
+      drinks.push({
+        name: "Counter unset",
+        venue: "Place search returned nothing",
+        venueId: anchor.id,
+        affinity: null,
+        because,
+        citation: cite(anchor, because, null),
+        gap: true,
+      });
+    }
   }
 
   const poured = drinks.find((row) => !row.gap);

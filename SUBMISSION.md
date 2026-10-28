@@ -17,7 +17,7 @@ A language model can describe "Blade Runner meets a 1970s jazz bar." It reaches 
 ## What it does
 
 1. You type a prompt, or pick one: Blade Runner meets a 1970s jazz bar, a Wes Anderson brunch, reading Murakami on a rainy night, Studio Ghibli bathhouse at dusk.
-2. `gpt-4.1-mini` names the works. Search confirms those names (`GET /search`). Tag search resolves mood words (`GET /v2/tags`). Insights then run for artists and places only. Place insights get 5 seconds, then one shorter retry with a single tag and no location if that call times out. Artist insights are signaled from the music seeds and the film or show, not from the author. The model does not invent tag URNs and it does not write the room JSON.
+2. `gpt-4.1-mini` names the works. Search confirms those names (`GET /search`). Tag search resolves mood words (`GET /v2/tags`). Insights then run for artists and places only. Place insights get 4 seconds, send the seeds and a city when the prompt has one, and do not send `filter.tags` or a retry. Artist insights are signaled from the music seeds and the film or show, not from the author. An empty artist call with no music seed can fall back to the mood tags. The model does not invent tag URNs and it does not write the room JSON.
 3. A deterministic compiler turns that graph into the room. Each lamp, object, and sound layer cites the entity and, when there is one, the tag and affinity. The poster is drawn type. The bed is a pad, a texture, and a pulse, inspired by the artists Qloo returned. Nothing in the audio is a copyrighted recording.
 4. A second call to the same model, with no tools, draws the cliché of the prompt. On a phone you toggle or swipe between the rooms. On a wide screen they sit side by side. The card under them names what Qloo added.
 5. **Send to my real lights** can post the palette to a webhook, a Philips Hue group, or a Home Assistant light. That path is off unless configured. A public demo should use a webhook or a public Home Assistant URL. Hue is LAN-only.
@@ -34,7 +34,7 @@ Base URL `https://hackathon.api.qloo.com`, header `X-Api-Key`, server-side only.
 
 1. `GET /search` confirms the names the model proposed.
 2. `GET /v2/tags` resolves mood words to tag ids.
-3. `GET /v2/insights` runs for `urn:entity:artist` and `urn:entity:place`, with `feature.explainability=true`. Places also send `filter.tags`. Murakami sends `filter.location.query=Tokyo`.
+3. `GET /v2/insights` runs for `urn:entity:artist` and `urn:entity:place`, with `feature.explainability=true`. Places do not send `filter.tags`. Murakami sends `filter.location.query=Tokyo`.
 
 Invalid parameters are omitted rather than sent. Insights rows describe what groups tend to like. The prompt is a cultural description. Personal data is not sent.
 

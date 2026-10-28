@@ -229,21 +229,24 @@ export function AtriumApp() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-[#0c0b0a] text-[#f4efe6]">
       <div id="prompt-bar" className="z-40 shrink-0 border-b border-white/10 bg-[#0c0b0a]">
-        <header className="flex items-center justify-between gap-3 px-2 pt-1.5 pb-0.5 sm:px-6 sm:pt-2 sm:pb-1">
-          <div>
+        <header className="flex items-center justify-between gap-2 px-2 pt-1.5 pb-0.5 sm:gap-3 sm:px-6 sm:pt-2 sm:pb-1">
+          <div className="min-w-0">
             <p className="font-display text-xl tracking-tight sm:text-3xl">Atrium</p>
-            <p className="font-mono text-[10px] tracking-[0.18em] text-white/55 uppercase">Taste graph, then the room · MIT License</p>
+            <p className="truncate font-mono text-[10px] tracking-[0.12em] text-white/55 uppercase sm:tracking-[0.18em]">
+              <span className="sm:hidden">Taste graph, then the room</span>
+              <span className="hidden sm:inline">Taste graph, then the room · MIT License</span>
+            </p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex shrink-0 flex-nowrap items-center justify-end gap-1">
             {status?.llm ? (
-              <Badge variant="outline" className="border-white/30 bg-white/10 text-[#f4efe6]">
+              <Badge variant="outline" className="border-white/30 bg-white/10 px-1.5 py-0 text-[10px] whitespace-nowrap text-[#f4efe6]">
                 Agent · {status.llm.model}
               </Badge>
             ) : null}
             {mock == null ? null : (
               <Badge
                 variant="outline"
-                className={mock ? "border-amber-200/70 bg-amber-200/15 text-amber-50" : "border-emerald-200/50 bg-emerald-200/10 text-emerald-50"}
+                className={`px-1.5 py-0 text-[10px] whitespace-nowrap ${mock ? "border-amber-200/70 bg-amber-200/15 text-amber-50" : "border-emerald-200/50 bg-emerald-200/10 text-emerald-50"}`}
               >
                 {mock ? "Mock fixture" : "Live Qloo"}
               </Badge>
@@ -255,7 +258,7 @@ export function AtriumApp() {
         </div>
       </div>
       <div className="min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto xl:grid xl:grid-cols-[minmax(0,1fr)_380px] xl:items-start">
-        <main className="min-w-0 max-w-full space-y-4 px-4 py-4 sm:px-6">
+        <main className="min-w-0 max-w-full space-y-4 px-3 py-4 sm:px-6">
           <div
             className={result ? "grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2" : undefined}
             onTouchStart={(event) => {

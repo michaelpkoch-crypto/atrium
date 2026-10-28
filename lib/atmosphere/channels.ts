@@ -102,6 +102,42 @@ const GARDEN: ChannelScene = {
   tags: ["tea", "pastel", "garden", "brunch"],
 };
 
+const GARDEN_DAYLIGHT: ChannelScene = {
+  name: "Garden Daylight",
+  effect: "pulse",
+  colors: ["#f4efe6", "#f2b7c4", "#7dce7a"],
+  beds: ["chime", "murmur"],
+  displayEffect: "portrait",
+  tags: ["regency", "romance", "pastel", "garden", "tea"],
+};
+
+const PASTEL_MORNING: ChannelScene = {
+  name: "Pastel Morning",
+  effect: "pulse",
+  colors: ["#f7c3d0", "#f4efe6", "#f7c3a0"],
+  beds: ["chime", "murmur"],
+  displayEffect: "portrait",
+  tags: ["pastel", "brunch", "symmetry"],
+};
+
+const HEARTHFIRE: ChannelScene = {
+  name: "Hearthfire",
+  effect: "candle",
+  colors: ["#e07a2f", "#e7c27a", "#5c4033"],
+  beds: ["fire", "murmur"],
+  displayEffect: "portrait",
+  tags: ["fire", "fantasy", "hearth"],
+};
+
+const CRT_GLOW: ChannelScene = {
+  name: "CRT Glow",
+  effect: "neon",
+  colors: ["#39e7ff", "#ff2bd6", "#141820"],
+  beds: ["murmur", "drone"],
+  displayEffect: "scanline",
+  tags: ["neon", "retro"],
+};
+
 const NEON_NOIR: ChannelScene = {
   name: "Neon noir",
   effect: "neon",
@@ -145,6 +181,10 @@ export function channelScene(prompt: string, tagNames: string[], era: Era | null
   if (/christmas/.test(text)) return CANDLELIGHT;
   if (/d[ií]a de los muertos|dia de los muertos|muertos|ofrenda/.test(text)) return MARIGOLD;
   if (/super bowl|halftime/.test(text)) return STADIUM;
+  if (/bridgerton|regency|tea party|garden tea/.test(text)) return GARDEN_DAYLIGHT;
+  if (/wes anderson|grand budapest|tenenbaums/.test(text) || (/\bbrunch\b/.test(text) && /\b(pastel|wes)\b/.test(text))) return PASTEL_MORNING;
+  if (/\b(lord of the rings|lotr|middle-earth|middle earth|hobbit|tolkien|hearthfire)\b/.test(text)) return HEARTHFIRE;
+  if (/stranger things|upside down/.test(text)) return CRT_GLOW;
   if (era?.decade === "1970s") return AMBER;
   if (era?.decade === "1980s") return EIGHTIES;
   if (/\b(rain|rainy|storm|drizzle)\b/.test(text)) return STORM;
@@ -152,8 +192,11 @@ export function channelScene(prompt: string, tagNames: string[], era: Era | null
   if (/horror|spooky|halloween/.test(tags)) return BLACKLIGHT;
   if (/christmas|holiday/.test(tags)) return CANDLELIGHT;
   if (/football|sports/.test(tags)) return STADIUM;
+  if (/\b(fire|hearth|fantasy)\b/.test(tags)) return HEARTHFIRE;
   if (/\b(jazz|vinyl|lounge|whiskey|whisky)\b/.test(tags)) return LOUNGE;
-  if (/\b(tea|pastel|garden|brunch|regency)\b/.test(tags)) return GARDEN;
+  if (/\bregency\b/.test(tags)) return GARDEN_DAYLIGHT;
+  if (/\b(pastel|brunch)\b/.test(tags)) return PASTEL_MORNING;
+  if (/\b(tea|garden)\b/.test(tags)) return GARDEN;
   if (/bathhouse|onsen|anime|ghibli/.test(tags)) return LANTERN;
   if (/\bdiner\b|chrome/.test(tags)) return DINER;
   if (/neon|noir/.test(tags)) return NEON_NOIR;
@@ -181,8 +224,17 @@ export function plainChannel(prompt: string): ChannelScene {
 
 export function displayEffectFor(scene: ChannelScene, kind: ScreenKind): DisplayEffect {
   if (scene.name === "Blacklight") return kind === "screen" ? "glitch" : kind === "frame" ? "ghost" : "static";
-  if (scene.name === "Neon noir" || scene.name === "Neon") return kind === "frame" ? "kanji" : "scanline";
-  if (scene.name === "Garden" || scene.name === "Candlelight" || scene.name === "Marigold" || scene.name === "Lantern" || scene.name === "Amber") {
+  if (scene.name === "Neon noir" || scene.name === "Neon" || scene.name === "CRT Glow") return kind === "frame" ? "kanji" : "scanline";
+  if (
+    scene.name === "Garden" ||
+    scene.name === "Garden Daylight" ||
+    scene.name === "Pastel Morning" ||
+    scene.name === "Hearthfire" ||
+    scene.name === "Candlelight" ||
+    scene.name === "Marigold" ||
+    scene.name === "Lantern" ||
+    scene.name === "Amber"
+  ) {
     return "portrait";
   }
   if (scene.name === "Stadium" || scene.name === "Diner") return "menu";
