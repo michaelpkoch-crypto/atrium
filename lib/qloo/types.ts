@@ -1,3 +1,5 @@
+import type { SceneMood } from "@/lib/agent/propose";
+
 /** Normalized taste-graph records. Field names are ours; the live client maps Qloo's payload into this shape. */
 
 export type TasteTag = {
@@ -46,6 +48,8 @@ export type TasteGraph = {
   signalEntityIds: string[];
   /** Tag ids actually sent as `signal.interests.tags`. */
   signalTagIds: string[];
+  /** Prompt time of day. Qloo tags color the room inside this scene. */
+  scene?: SceneMood;
 };
 
 export type QlooTraceCall = {
@@ -55,6 +59,8 @@ export type QlooTraceCall = {
   status: number;
   resultCount: number;
   mocked: boolean;
+  /** True when this row was served from the instance cache, not a new HTTP call. */
+  cached?: boolean;
   error?: string;
 };
 
@@ -69,12 +75,17 @@ export type InsightTarget =
 export interface TasteClient {
   readonly mode: "live" | "mock";
   readonly trace: QlooTraceCall[];
-  search(query: string, take?: number): Promise<TasteEntity[]>;
+  search(query: string, take?: number, types?: string): Promise<TasteEntity[]>;
   searchTags(query: string, take?: number): Promise<TasteTag[]>;
   insights(args: {
     filterType: InsightTarget;
     entityIds: string[];
     tagIds: string[];
+    /** Tag ids passed as `filter.tags`, used to keep places inside a category. */
+    filterTagIds?: string[];
+    /** City or neighborhood passed as `filter.location.query` for places. */
+    location?: string;
     take?: number;
+    timeoutMs?: number;
   }): Promise<{ entities: TasteEntity[]; tags: TasteTag[] }>;
 }

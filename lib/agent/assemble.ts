@@ -1,0 +1,464 @@
+import type { AgentStep } from "@/lib/agent/steps";
+import {
+  broaderPlaceQueries,
+  confirmsName,
+  chooseSignalTags,
+  counterRejected,
+  dedupeByName,
+  aestheticTag,
+  offVibe,
+  placeFits,
+  rankCounterPlaces,
+  tagFitsMood,
+  tagsForRoom,
+  type PersonKind,
+  type Proposal,
+  type WorkKind,
+} from "@/lib/agent/propose";
+import { keepInsightRows, rankInsightArtists } from "@/lib/agent/rank";
+import type { TasteClient, TasteEntity, TasteGraph, TasteTag } from "@/lib/qloo/types";
+
+const WORK_TYPE: Record<WorkKind, string> = {
+  movie: "urn:entity:movie",
+  tv: "urn:entity:tv_show",
+  book: "urn:entity:book",
+};
+
+const PERSON_TYPE: Record<PersonKind, string> = {
+  person: "urn:entity:person",
+  artist: "urn:entity:artist",
+};
+
+/**
+ * Search the names in a proposal, drop anything that is not that name,
+ * then ask insights. Place insights are limited to the place categories.
+ */
+export async function assembleGraph(
+  client: TasteClient,
+  prompt: string,
+  proposal: Proposal,
+  steps: AgentStep[],
+): Promise<TasteGraph | null> {
+  const found = await confirmAll(client, prompt, proposal, steps);
+  if (!found.seeds.length && !found.tags.length && !found.places.length) return null;
+
+  const entityIds = found.seeds.map((seed) => seed.id);
+  const tagIds = found.tags.map((tag) => tag.id);
+  const placeTagIds = found.placeTags.map((tag) => tag.id);
+  const buckets = emptyBuckets();
+
+  // Artists and places are the rows a judge looks for. Brands, books, and movies are already
+  // the seeds, so they do not get their own insights call. Place insights use the seeds and,
+  // when the prompt has a city, the location. They do not send filter.tags.
+  const [artistPull, placePull] = await Promise.all([
+    pullArtists(client, found.seeds, tagIds),
+    placeInsights(client, proposal.city, entityIds),
+  ]);
+  buckets.artists = artistPull.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
+  if (placePull) {
+    buckets.places = placePull.entities.filter((entity) => !entityIds.includes(entity.id) && !offVibe(entity, proposal));
+  }
+
+  for (const key of Object.keys(buckets) as (keyof typeof buckets)[]) {
+    buckets[key] = keepInsightRows(buckets[key]);
+  }
+
+  const rawPlaces = buckets.places;
+  const insightPlaces = rawPlaces.filter((place) => placeFits(place, proposal, prompt));
+  let places = rankCounterPlaces(dedupeByName([...insightPlaces, ...found.places]), proposal).slice(0, 4);
+  if (!places.length) {
+    const synonyms = broaderPlaceQueries(proposal.placeQueries);
+    const extra = await Promise.all(synonyms.slice(0, 2).map(async (query) => ({ query, hits: await searchSafe(client, query, "urn:entity:place") })));
+    places = rankCounterPlaces(
+      dedupeByName(extra.flatMap((row) => row.hits).filter((place) => place.type.includes("place") && placeFits(place, proposal, prompt))),
+      proposal,
+    ).slice(0, 4);
+    if (synonyms.length) {
+      steps.push({
+        why: "The specific place search was empty, so a broader name for the same kind of venue was tried.",
+        call: "GET /search",
+        detail: `types=urn:entity:place; ${synonyms.join(", ")}`,
+        result: places.map((place) => place.name).join(", ") || "no place kept",
+      });
+    }
+  }
+  if (!places.length) {
+    places = rankCounterPlaces(
+      dedupeByName(rawPlaces.filter((place) => !counterRejected(place.name))),
+      proposal,
+    ).slice(0, 4);
+    if (places.length) {
+      steps.push({
+        why: "No place matched the room category, so the best venue that can still pour was kept.",
+        call: "rank_places",
+        detail: proposal.placeTags.join(", ") || proposal.placeQueries.join(", ") || "place insights",
+        result: places.map((place) => place.name).join(", "),
+      });
+    }
+  }
+  buckets.places = places;
+  if (!insightPlaces.length && places.length) {
+    steps.push({
+      why: "Place insights returned nothing that fit, so the room uses a place search for the venue kind.",
+      call: "GET /search",
+      detail: `types=urn:entity:place; ${proposal.placeQueries.join(", ") || proposal.placeTags.join(", ")}`,
+      result: places.map((place) => place.name).join(", "),
+    });
+  }
+  const rankedArtists = rankInsightArtists(
+    mergeAffinity([...found.artists, ...buckets.artists.filter((artist) => !offVibe(artist, proposal))]),
+    found.seeds,
+    proposal,
+    prompt,
+  );
+  buckets.artists = rankedArtists.artists;
+  const artistInsights = client.trace.find((call) => call.path === "/v2/insights" && call.query["filter.type"] === "urn:entity:artist");
+  const artistLines = rankedArtists.report
+    .slice(0, 8)
+    .map((row) => `${row.name}: ${row.kept ? "kept" : "dropped"} via ${row.via}`)
+    .join("; ");
+  steps.push({
+    why: "Each artist line names the token and the entity that kept or dropped it.",
+    call: "rank_artists",
+    detail: `${artistPull.note} ${artistInsights?.cached ? "Cached insights, then ranked." : "Ranked after insights."}`,
+    result: artistLines || "none",
+  });
+  buckets.movies = mergeAffinity([...found.movies, ...buckets.movies]);
+  buckets.books = mergeAffinity([...found.books, ...buckets.books]);
+
+  const seedNames = found.seeds.map((seed) => seed.name).join(", ") || "the tag signals";
+  for (const row of [
+    ["artists", "urn:entity:artist"],
+    ["places", "urn:entity:place"],
+  ] as const) {
+    const [key, filterType] = row;
+    steps.push({
+      why:
+        key === "places"
+          ? `Which places sit next to ${seedNames}.${proposal.city ? ` Location ${proposal.city}.` : ""} Place insights do not send filter.tags.`
+          : artistPull.note,
+      call: "GET /v2/insights",
+      detail:
+        key === "places"
+          ? `filter.type=${filterType}; signal.interests.entities${proposal.city ? "; filter.location.query" : ""}`
+          : artistPull.detail,
+      result: buckets[key].map((entity) => entity.name).slice(0, 4).join(", ") || "no rows",
+    });
+  }
+
+  if (!found.seeds.length && !buckets.artists.length && !places.length && !buckets.books.length && !buckets.movies.length) {
+    return null;
+  }
+
+  const seeds = found.seeds.map((entity) => calm(entity, proposal));
+  const graph: TasteGraph = {
+    source: client.mode === "mock" ? "mock" : "qloo",
+    synthetic: false,
+    seeds,
+    artists: buckets.artists.map((entity) => calm(entity, proposal)),
+    places: buckets.places.map((entity) => calm(entity, proposal)),
+    brands: buckets.brands.map((entity) => calm(entity, proposal)),
+    books: buckets.books.map((entity) => calm(entity, proposal)),
+    movies: buckets.movies.map((entity) => calm(entity, proposal)),
+    tags: roomTags(found.tags, seeds, proposal),
+    signalEntityIds: entityIds,
+    signalTagIds: placeTagIds.length ? placeTagIds : tagIds,
+    scene: proposal.scene,
+  };
+  return graph;
+}
+
+function calm(entity: TasteEntity, proposal: Proposal): TasteEntity {
+  return { ...entity, tags: tagsForRoom(entity.tags, proposal) };
+}
+
+/** Mood tags that are also short aesthetic words. Plot sentences stay off the lamps. */
+function roomTags(found: TasteTag[], seeds: TasteEntity[], proposal: Proposal): TasteTag[] {
+  const pool = [...found];
+  for (const seed of seeds) {
+    for (const tag of seed.tags) {
+      if (!pool.some((item) => item.id === tag.id)) pool.push(tag);
+    }
+  }
+  return tagsForRoom(pool, proposal).filter((tag) => tagFitsMood(tag.name, proposal) && aestheticTag(tag.name)).slice(0, 6);
+}
+
+async function confirmAll(client: TasteClient, prompt: string, proposal: Proposal, steps: AgentStep[]) {
+  const seeds: TasteEntity[] = [];
+  const artists: TasteEntity[] = [];
+  const movies: TasteEntity[] = [];
+  const books: TasteEntity[] = [];
+  const rejected: string[] = [];
+
+  const tagQueries = unique([
+    ...proposal.placeTags.filter((tag) => !GENERIC_TAG.has(tag.toLowerCase())),
+    ...proposal.moodTags,
+  ]).slice(0, 4);
+  const [workHits, personHits, placeBatches, tagRows] = await Promise.all([
+    Promise.all(proposal.works.map(async (work) => ({ work, hits: await searchBoth(client, work.name, WORK_TYPE[work.kind]) }))),
+    Promise.all(proposal.people.map(async (person) => ({ person, hits: await searchBoth(client, person.name, PERSON_TYPE[person.kind]) }))),
+    Promise.all(proposal.placeQueries.map(async (query) => ({ query, hits: await searchSafe(client, query, "urn:entity:place") }))),
+    Promise.all(
+      tagQueries.map(async (query) => {
+        try {
+          const found = await client.searchTags(query, 4);
+          return found.map((tag) => ({ tag, query }));
+        } catch {
+          return [];
+        }
+      }),
+    ).then((rows) => rows.flat()),
+  ]);
+  for (const { work, hits } of workHits) {
+    const hit = hits.find((entity) => confirmsName(work.name, entity.name) && typeFits(entity.type, work.kind));
+    const missed = hits.map((entity) => entity.name).filter((name) => !confirmsName(work.name, name));
+    rejected.push(...missed);
+    if (!hit) {
+      steps.push({
+        why: `Look up “${work.name}” as a ${work.kind}. A hit is kept only when it is that name.`,
+        call: "GET /search",
+        detail: `query=${work.name}&types=${WORK_TYPE[work.kind]}`,
+        result: "no entity kept",
+      });
+      continue;
+    }
+    pushUnique(seeds, hit);
+    if (work.kind === "movie" || work.kind === "tv") pushUnique(movies, hit);
+    if (work.kind === "book") pushUnique(books, hit);
+    steps.push({
+      why: `“${work.name}” is the work the prompt means. Search hits that are a different name were dropped.`,
+      call: "GET /search",
+      detail: `query=${work.name}&types=${WORK_TYPE[work.kind]}`,
+      result: hit.name,
+    });
+  }
+
+  for (const { person, hits } of personHits) {
+    const hit = hits.find((entity) => confirmsName(person.name, entity.name, true) && typeFits(entity.type, person.kind));
+    if (!hit) continue;
+    pushUnique(seeds, hit);
+    if (person.kind === "artist" || hit.type.includes("artist")) pushUnique(artists, hit);
+    steps.push({
+      why: `Confirm “${person.name}” on the taste graph before asking what sits next to the works.`,
+      call: "GET /search",
+      detail: `query=${person.name}&types=${PERSON_TYPE[person.kind]}`,
+      result: hit.name,
+    });
+  }
+
+  const placeHits = placeBatches.flatMap((row) => row.hits.map((hit) => ({ query: row.query, hit })));
+  const places = dedupeByName(
+    placeHits
+      .map((row) => row.hit)
+      .filter((place) => place.type.includes("place") && placeFits(place, proposal, prompt)),
+  ).slice(0, 3);
+  if (proposal.placeQueries.length) {
+    steps.push({
+      why: "Search the place kind the prompt means. A venue whose name is only a word from the prompt is not a venue.",
+      call: "GET /search",
+      detail: `types=urn:entity:place`,
+      result: places.map((place) => place.name).join(", ") || "no place kept",
+    });
+  }
+
+  const chosenTags = chooseSignalTags(tagRows, proposal);
+  const tags = chosenTags.tags;
+  const droppedTags = chosenTags.dropped;
+  steps.push({
+    why: `Keep tags that are the moods ${proposal.moodTags.join(", ") || "named for this prompt"}. Other tag hits are a different vibe.`,
+    call: "GET /v2/tags",
+    detail: tagQueries.join(", "),
+    result: tags.map((tag) => tag.name).join(", ") || "no tag",
+  });
+  if (droppedTags.length) {
+    steps.push({
+      why: "Extra hits for a tag that was kept, or a different name, were not sent as signals.",
+      call: "reject_tags",
+      detail: proposal.rejectTags.slice(0, 4).join(", ") || "one tag per name",
+      result: unique(droppedTags).slice(0, 8).join(", "),
+    });
+  }
+  if (rejected.length) {
+    steps.push({
+      why: "These search hits were a different name from the one we asked for.",
+      call: "reject_entities",
+      detail: "name match",
+      result: unique(rejected).slice(0, 6).join(", "),
+    });
+  }
+
+  const placeTags = tags.filter((tag) => {
+    const name = tag.name.toLowerCase();
+    return proposal.placeTags.some((query) => {
+      const wanted = query.toLowerCase();
+      if (GENERIC_TAG.has(wanted)) return false;
+      return name === wanted || name.includes(wanted) || wanted.includes(name);
+    });
+  });
+
+  return { seeds: seeds.slice(0, 6), artists, movies, books, places, tags, placeTags };
+}
+
+async function searchBoth(client: TasteClient, query: string, types: string): Promise<TasteEntity[]> {
+  const typed = await searchSafe(client, query, types);
+  if (typed.length) return typed;
+  return searchSafe(client, query);
+}
+
+async function searchSafe(client: TasteClient, query: string, types?: string): Promise<TasteEntity[]> {
+  try {
+    return await client.search(query, 4, types);
+  } catch {
+    return [];
+  }
+}
+
+function typeFits(entityType: string, kind: WorkKind | PersonKind): boolean {
+  const type = entityType.toLowerCase();
+  if (kind === "movie") return type.includes("movie");
+  if (kind === "tv") return type.includes("tv");
+  if (kind === "book") return type.includes("book");
+  if (kind === "artist") return type.includes("artist") || type.includes("person");
+  return type.includes("person") || type.includes("author") || type.includes("director") || type.includes("artist");
+}
+
+function pushUnique(list: TasteEntity[], entity: TasteEntity) {
+  if (!list.some((item) => item.id === entity.id)) list.push(entity);
+}
+
+function mergeAffinity(entities: TasteEntity[]): TasteEntity[] {
+  const map = new Map<string, TasteEntity>();
+  for (const entity of entities) {
+    const current = map.get(entity.id);
+    if (!current || (current.affinity == null && entity.affinity != null)) map.set(entity.id, entity);
+  }
+  return [...map.values()];
+}
+
+function emptyBuckets() {
+  return {
+    artists: [] as TasteEntity[],
+    places: [] as TasteEntity[],
+    brands: [] as TasteEntity[],
+    books: [] as TasteEntity[],
+    movies: [] as TasteEntity[],
+  };
+}
+
+async function placeInsights(
+  client: TasteClient,
+  city: string,
+  entityIds: string[],
+): Promise<{ entities: TasteEntity[]; tags: TasteTag[] } | null> {
+  if (!entityIds.length) return null;
+  try {
+    return await client.insights({
+      filterType: "urn:entity:place",
+      entityIds: entityIds.slice(0, 4),
+      tagIds: [],
+      location: city || undefined,
+      take: 4,
+      timeoutMs: 4_000,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Film-inclusive artist insights often come back empty for an occasion.
+ * When no music seed was confirmed, signal the occasion mood tags instead.
+ * A room that already has a music seed does not take that wider tag call.
+ */
+async function pullArtists(
+  client: TasteClient,
+  seeds: TasteEntity[],
+  moodTagIds: string[],
+): Promise<{ entities: TasteEntity[]; note: string; detail: string }> {
+  const music = seeds.filter((seed) => seed.type.includes("artist"));
+  const primary = artistSignalIds(seeds);
+  const musicIds = music.map((seed) => seed.id);
+  let entities: TasteEntity[] = [];
+  let note = artistSignalNote(seeds);
+  let detail = `filter.type=urn:entity:artist; signal.interests.entities=${primary.join(",") || "none"}`;
+  let entityOk = false;
+  if (primary.length) {
+    try {
+      const result = await client.insights({
+        filterType: "urn:entity:artist",
+        entityIds: primary,
+        tagIds: [],
+        take: 4,
+        timeoutMs: 5_000,
+      });
+      entities = result.entities;
+      entityOk = true;
+    } catch {
+      // The client recorded the timeout. A tag signal can still name the score.
+    }
+  }
+  const filmed = musicIds.length > 0 && primary.length > musicIds.length;
+  if (entityOk && !entities.length && filmed) {
+    try {
+      const result = await client.insights({
+        filterType: "urn:entity:artist",
+        entityIds: musicIds,
+        tagIds: [],
+        take: 4,
+        timeoutMs: 3_500,
+      });
+      entities = result.entities;
+      note = "Film-signaled artist insights were empty, so the call used the music seeds only.";
+      detail = `filter.type=urn:entity:artist; signal.interests.entities=${musicIds.join(",")}`;
+    } catch {
+      // The music seeds already on the graph can still fill the band.
+    }
+  }
+  if (!entities.length && !musicIds.length && moodTagIds.length) {
+    const tagIds = moodTagIds.slice(0, 3);
+    try {
+      const result = await client.insights({
+        filterType: "urn:entity:artist",
+        entityIds: [],
+        tagIds,
+        take: 4,
+        timeoutMs: 3_500,
+      });
+      if (result.entities.length) {
+        entities = result.entities;
+        note = "Entity artist insights were empty, so the call signaled the occasion mood tags.";
+        detail = `filter.type=urn:entity:artist; signal.interests.tags=${tagIds.join(",")}`;
+      }
+    } catch {
+      // Search-confirmed music seeds can still fill the band.
+    }
+  }
+  return { entities, note, detail };
+}
+
+/** Music seeds, plus the film or show so a series audience still returns. Never the person or the book. */
+export function artistSignalIds(seeds: TasteEntity[]): string[] {
+  const music = seeds.filter((seed) => seed.type.includes("artist"));
+  if (!music.length) return seeds.map((seed) => seed.id);
+  const works = seeds.filter((seed) => seed.type.includes("movie") || seed.type.includes("tv"));
+  return [...new Set([...music, ...works].map((seed) => seed.id))];
+}
+
+function artistSignalNote(seeds: TasteEntity[]): string {
+  const music = seeds.some((seed) => seed.type.includes("artist"));
+  if (!music) return "No music seed, so artist insights used every confirmed seed.";
+  const works = seeds.some((seed) => seed.type.includes("movie") || seed.type.includes("tv"));
+  return works
+    ? "Artist insights signaled the music seeds and the film or show, not the person."
+    : "Artist insights signaled the music seeds, not the person.";
+}
+
+const GENERIC_TAG = new Set(["cafe", "bar", "club", "cocktail", "shop", "place", "restaurant", "room"]);
+
+function unique(values: string[]): string[] {
+  const out: string[] = [];
+  for (const value of values) {
+    if (value && !out.some((item) => item.toLowerCase() === value.toLowerCase())) out.push(value);
+  }
+  return out;
+}

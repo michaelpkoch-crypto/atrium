@@ -1,22 +1,34 @@
 # Atrium
 
-Atrium is a taste-to-atmosphere compiler for the [Qloo Agentic Hackathon](https://qloo.devpost.com/). You type a cultural prompt. The app asks Qloo which artists, places, brands, and books sit next to that taste, then renders the room: palette, generative artwork, a WebAudio texture, and the music, drinks, and objects those affinities justify.
+MIT License. See [LICENSE](LICENSE).
 
-Every color, drink, and object cites the Qloo entity or tag that produced it. If the citation disappeared, the choice would disappear with it.
+Atrium turns a cultural prompt into a room. Qloo's taste graph decides the lamps, the furniture, the poster, and the sound. A second model call, with no Qloo tools, draws the obvious cliché of the same prompt so the difference is visible.
+
+The room is the product. Every light, object, and sound layer cites the Qloo entity or tag that earned it. Tap a lamp and the chip reads like: from Qloo tag "lo-fi" · affinity 0.82 · entity: Nujabes.
 
 ```mermaid
 flowchart LR
-  prompt[Cultural prompt] --> agent[Orchestrator]
+  prompt[Cultural prompt] --> agent[Agent with tools]
+  prompt --> plain[Plain model, no tools]
   agent --> search["GET /search"]
   agent --> tags["GET /v2/tags"]
   search --> insights["GET /v2/insights"]
   tags --> insights
   insights --> compiler[Atmosphere compiler]
-  compiler --> room[Room simulator]
+  compiler --> qlooRoom[Qloo room]
+  plain --> plainRoom[Plain room]
+  qlooRoom --> diff[What Qloo added]
+  plainRoom --> diff
   compiler --> lights[Hue / Home Assistant / webhook]
 ```
 
-The orchestrator is the Vercel AI SDK with tool calling when a model key is set. With no model key, the same Qloo client runs in a fixed order: search, tags, then cross-domain insights. The compiler is deterministic and validated with zod, so the same taste graph always prints the same room JSON.
+On Vercel, Production and Preview have `QLOO_API_KEY` and `OPENAI_API_KEY`. The designed path is the agent (`gpt-4.1-mini` choosing lookups) beside a plain `gpt-4.1-mini` room that never sees Qloo. Locally, with both keys empty, the same page runs a fixed lookup order and a labeled cliché. The badge says **Mock fixture** in that case. It never says the model key is missing.
+
+The compiler is deterministic and validated with zod. The model does not author the room JSON. `compile_atmosphere` runs the compiler on the graph the tools returned.
+
+## Who it is for
+
+Someone setting a room at home, and the same idea for a bar, a restaurant, or a shop floor: name the taste, see the ambiance, then send the lamps to real lights.
 
 ## Run it
 
@@ -28,7 +40,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open [http://127.0.0.1:43123](http://127.0.0.1:43123). Leave `QLOO_API_KEY` empty for the labeled fixture graph. The badge says **Mock data** until a key is present.
+Open [http://127.0.0.1:43123](http://127.0.0.1:43123). Leave the keys empty to use the labeled fixture graph. Set `QLOO_API_KEY` for live taste data and `OPENAI_API_KEY` for the agent and the plain-model comparison. `QLOO_MODE=auto` uses live Qloo when the key is present.
 
 ```bash
 npm test
@@ -40,16 +52,19 @@ npm run lint
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `QLOO_API_KEY` | For live taste data | Hackathon key. Sent only as the `X-Api-Key` header, server-side. |
-| `QLOO_API_URL` | No | Defaults to `https://hackathon.api.qloo.com`. Hackathon keys 401 on `api.qloo.com` and `staging.api.qloo.com`. |
+| `QLOO_API_URL` | No | Defaults to `https://hackathon.api.qloo.com`. |
 | `QLOO_MODE` | No | `auto` (default), `mock`, or `live`. |
 | `LLM_PROVIDER` | No | `openai`, `anthropic`, or `gateway`. |
 | `LLM_MODEL` | No | Overrides the provider default. |
 | `LLM_API_KEY` | No | Fallback key when the provider-specific variable is empty. |
-| `OPENAI_API_KEY` | No | OpenAI. Default model `gpt-4.1-mini`. |
+| `OPENAI_API_KEY` | For the agent and the plain comparison | OpenAI. Default model `gpt-4.1-mini`. Set on Vercel Production and Preview. |
 | `ANTHROPIC_API_KEY` | No | Anthropic. Default model `claude-sonnet-4-5`. |
 | `AI_GATEWAY_API_KEY` | No | Vercel AI Gateway. Default model `openai/gpt-4.1-mini`. |
-| `ATMOSPHERE_DISPATCH` | No | `off` (default), `webhook`, `hue`, or `home_assistant`. |
-| `ATMOSPHERE_DISPATCH_AUTO` | No | `true` pushes the palette at the end of a compile. |
+| `ATMOSPHERE_DISPATCH` | No | `off` (default), `webhook`, `hue`, `home_assistant`, or `govee`. A comma list that includes `govee` sends to Govee. |
+| `ATMOSPHERE_DISPATCH_AUTO` | No | `true` pushes the palette at the end of a compile. Ignored for Govee. |
+| `ATMOSPHERE_OWNER_TOKEN` | For Govee | Secret the owner types once. Required before any Govee call. |
+| `GOVEE_API_KEY` | For Govee | Cloud key from the Govee Home app. Server only. |
+| `GOVEE_DEVICES` | No | Optional comma list of device ids or SKUs. Empty means every color bulb. |
 | `DISPATCH_WEBHOOK_URL` | For webhook | Public URL that accepts `POST` JSON. |
 | `HUE_BRIDGE_HOST` | For Hue | Bridge host. Reachable only from the same LAN. |
 | `HUE_USERNAME` | For Hue | Hue API username. |
@@ -58,51 +73,107 @@ npm run lint
 | `HA_TOKEN` | For Home Assistant | Long-lived access token. |
 | `HA_ENTITY_ID` | For Home Assistant | Light entity, for example `light.living_room`. |
 
-Request a Qloo key from the [hackathon developer guide](https://docs.qloo.com/reference/qloo-llm-hackathon-developer-guide). Keys usually arrive by email within a few business days.
-
 ## What Qloo is asked to do
 
-The client follows the hackathon guide. It does not call `/recommendations` or `/recs`.
+The client does not call `/recommendations` or `/recs`.
 
-1. `GET /search?query=` resolves names in the prompt to entity ids.
-2. `GET /v2/tags?filter.query=` resolves mood words such as "jazz" or "brunch" to tag ids. Free text is never sent as a tag URN.
-3. `GET /v2/insights` is called once per domain (`artist`, `place`, `brand`, `book`, `movie`, and `urn:tag`) with `signal.interests.entities`, `signal.interests.tags` when tags resolved, and `feature.explainability=true`.
+1. `gpt-4.1-mini` names the works and the people (`propose_seeds`). For the sample prompts, and for a Tarantino diner or a Bridgerton tea, canonical names win.
+2. `GET /search` confirms those names. A hit is kept only when it is that name. Blade Runner 2049 is not Blade Runner.
+3. `GET /v2/tags` resolves the mood and place words to tag ids. Free text is never sent as a tag URN.
+4. `GET /v2/insights` runs for artists and for places, with `feature.explainability=true`. Place insights send the seed entities and, for Murakami, `filter.location.query=Tokyo`. They do not send `filter.tags`. Place insights are allowed 4 seconds and are not retried. Artist insights are allowed 5 seconds. If that call comes back empty and no music seed was confirmed, a mood-tag call (`signal.interests.tags`) follows. A known prompt does not wait on a second model pass to judge tags. A timeout is not retried on its own.
 
-Parameters are the ones documented for those `filter.type` values. Auth is `X-Api-Key`. A 401 response names the hackathon host, because a valid key on the wrong host is the usual failure.
+Calls share a queue of two. A 429 waits on `Retry-After` and is not listed unless the retry fails. Successful reads stay in an in-memory cache for 24 hours. The API key is not part of the cache key, and no Qloo payload is committed.
 
-The dossier lists every call, the seeds, the cross-domain rows, and the affinity or explainability score that justified each choice. Mock rows are marked fixture, and the banner says **MOCK TASTE GRAPH**.
+Artists set the tempo. Artist insights are signaled with the music seeds, and with the film or show when the prompt names one. If that returns no artists and no music seed was confirmed, the occasion tags (horror, halloween, christmas) are signaled. The author or other person stays on the place call, so a novelist's audience does not fill the band. A neighbor stays when it shares an allowlisted genre or mood with those seeds, such as jazz, piano, ambient, or classical. Literature, pop, and singer-songwriter do not count. The debug trace prints each keep as `kept via jazz from Bill Evans`. A short list is kept on purpose. Places set the counter from the room the prompt names: a kitchen looks for a café or tea house, and an onsen only wins when the prompt says bathhouse. A place whose whole name is Tavern, Pub, or Arcade is not a venue. Sky Garden and Jardin Majorelle are dropped. If nothing matches that category, the best restaurant, café, or bar that came back still pours. A sample prompt with no venue still pours the drink the prompt implies, cited from a seed. A kitchen pours tea or hojicha. A 1980s basement pours cola. A church, a hotel, or a landmark does not pour, and a restaurant is not drawn as a tub. One tag is kept per query. A lamp cites a tag only when that tag fits the prompt and is a short mood or aesthetic word. Plot tags such as "Sneaking out of the house" or "Bathtub" are left out. Both rooms use the prompt's time of day. A rainy night reads Night · rain. A dusk prompt reads Dusk. Christmas morning reads Morning. A stated decade grades the palette, the fixtures, and the hiss: 1970s amber and a globe pendant with vinyl crackle, 1980s neon with a CRT, a lava lamp, and tape hiss. The chip says `Era: 1985, from the prompt` and is not a Qloo entity.
+
+Auth is `X-Api-Key`. A 401 names the hackathon host. Personal data is not sent. The prompt is a cultural description, not a user profile. Results describe what groups tend to like.
+
+The trace under the room lists each call and why it was made. When the model key is set, the line reads `{model} chose these Qloo calls.`
+
+## Plain reading
+
+The comparison is a second `generateText` with `Output.object` and no tools. It is allowed to be generic: cyan rain, a saxophone, pink symmetry, a cat. The card under the rooms lists names Qloo added that the plain side did not reach, and names both sides landed on.
+
+On a phone, **Atrium** and **Plain LLM** switch the room. A swipe does the same. On a wide screen both rooms stay side by side.
+
+With no model key, that side is a fixed cliché of the words in the prompt, and the note says so. The hosted app has the key, so judges see two model calls.
+
+## A request, redacted
+
+Live response bodies are not stored in the repo. The names below are the ones Preview returned for these prompts. The call shape is the same against `https://hackathon.api.qloo.com`.
+
+```
+POST /api/compile
+{ "prompt": "Blade Runner meets a 1970s jazz bar" }
+
+GET /search?query=Blade%20Runner&types=urn:entity:movie
+GET /search?query=Vangelis&types=urn:entity:artist
+GET /v2/tags?filter.query=jazz
+GET /v2/insights?filter.type=urn:entity:artist&signal.interests.entities=…
+GET /v2/insights?filter.type=urn:entity:place&signal.interests.entities=…&filter.location.query=Los%20Angeles
+```
+
+The room that came back: Blade Runner, Vangelis, a jazz bar (The Low Room on the fixture graph; a jazz bar or lounge on live, not a sky bar), a rye old fashioned, night. The plain reading stayed on cyan rain. The comparison names the bar and the composer in a few large lines. The row list is collapsed.
+
+Other live rooms from the same Preview pass:
+
+- Studio Ghibli bathhouse at dusk: Spirited Away, Joe Hisaishi, a bathhouse counter, hojicha, dusk. Neighbors who only share "film composer" (John Williams, Michael Giacchino) are ranked below artists who share the film's tags.
+- a Wes Anderson brunch: The Grand Budapest Hotel, Wes Anderson, Alexandre Desplat, a pastel café, grapefruit spritz, day. No rain.
+- reading Murakami on a rainy night: Norwegian Wood, Kafka on the Shore, Bill Evans, a kissaten in Tokyo, a whiskey highball, Night · rain. A singer whose affinity is Murakami, even with a Jazz tag, drops.
+- Tarantino road trip diner at 2am: Pulp Fiction, Reservoir Dogs, Quentin Tarantino, Ennio Morricone, an American diner, bottomless coffee, night. Neon, retro, and crime from the films color the lamps amber. The trace should not say a fixture had no aesthetic tag.
+- Bridgerton garden tea party: Bridgerton, Pride and Prejudice, Vitamin String Quartet, a tea room, Earl Grey, day. A place named only Gården is dropped. The line on the card is the audience insight: Qloo's Bridgerton fans lean Harry Styles and Olivia Rodrigo, so the pad is a string-quartet take on modern pop.
 
 ## Lights
 
-Dispatch is off unless you opt in.
+**Send to my real lights** is the bridge from the virtual room to a room you can stand in. Dispatch stays off unless you opt in.
 
-- **Webhook** is the one that works from a public deploy. The body is `{ event: "atrium.atmosphere", palette, tempoBpm, title, prompt }`.
+- **Webhook** works from a public deploy. The body is `{ event: "atrium.atmosphere", palette, tempoBpm, title, prompt, lights }`. `lights` is `{ id, label, color, intensity }[]`.
 - **Philips Hue** `PUT`s `on`, `bri`, and `xy` to `/api/{username}/groups/{id}/action`. The bridge has to be on the same network as the Next.js server. A Vercel deployment cannot see `192.168.x.x`.
-- **Home Assistant** `POST`s `/api/services/light/turn_on` with `rgb_color`. Use a URL the host can reach, such as a Nabu Casa webhook or a cloud endpoint, if the demo is public.
+- **Home Assistant** `POST`s `/api/services/light/turn_on` with `rgb_color`. Use a URL the host can reach.
+- **Govee** uses the cloud OpenAPI. See [Real lights (Govee)](#real-lights-govee).
 
-"Send this palette" always shows whether anything was dispatched. With dispatch off, it returns the payload it would have sent and does not call the network.
+The button always says whether anything was sent. With dispatch off, it returns the payload it would have sent and does not call the network.
 
-## Deploy for judges
+## Real lights (Govee)
 
-The demo has to be public, with no login. Vercel fits.
+Govee bulbs are optional. A public demo does not control them unless you set the server env and type the owner token.
 
-1. Push this repo and import it as a Next.js project.
-2. Set `QLOO_API_KEY` and `QLOO_API_URL=https://hackathon.api.qloo.com` in the project environment. Leave `QLOO_MODE` at `auto`.
-3. Optionally set one model key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `AI_GATEWAY_API_KEY`) and `LLM_MODEL` if the default id is not on your account.
-4. Leave `ATMOSPHERE_DISPATCH=off` unless you have a **public** webhook or Home Assistant URL. Do not put a LAN Hue address in the hosted project.
-5. Deploy. The site should compile a room from a cold visit: type a prompt, or use one of the four examples, and read the taste-graph panel.
+1. In the Govee Home app, open Profile, then About Us, then Apply for API Key. That key is `GOVEE_API_KEY`.
+2. Set `ATMOSPHERE_DISPATCH=govee` and `ATMOSPHERE_OWNER_TOKEN` to a long secret you choose. Optionally set `GOVEE_DEVICES` to a comma-separated list of device ids or SKUs. Leave it empty to use every color bulb on the account.
+3. Redeploy. The key and the owner token stay on the server. The page asks for the token in an Owner field and stores it in this browser only.
+4. Compile a room, enter the token, and press **Send to my real lights**. Atrium lists devices at `GET https://openapi.api.govee.com/router/api/v1/user/devices` with header `Govee-API-Key`, then `POST /router/api/v1/device/control` for power, a steady `colorRgb`, and brightness. The scene's primary, secondary, and accent colors are spread across the bulbs. Real bulbs get those steady colors. They do not flicker.
+5. After the call, each bulb shows a chip with its name, a color swatch, and ok or the error. A wrong token, or no token, returns the preview and does not call Govee.
 
-`SUBMISSION.md` is the draft for the Devpost form. Put the public URL and this repository on the submission. The license file is MIT.
+`ATMOSPHERE_DISPATCH_AUTO` does not fire for Govee, so a compile from a stranger cannot change the bulbs. `/api/dispatch` stays rate-limited. A 429 from Govee waits once, then stops that command.
 
-Without `QLOO_API_KEY` the hosted demo still runs, on purpose, but the badge stays on mock data. Judges should see live Qloo calls, so add the key before you submit.
+## Deploy
 
-`/api/compile` allows 12 requests per 10 minutes per IP, and 80 across everyone on that server instance, so a public page cannot drain the Qloo or model quota in one loop. `/api/dispatch` is capped the same way. The limiter is in memory: on Vercel it applies per instance, not across every instance. A request body cannot choose the webhook, Hue, or Home Assistant address. Those come from server environment variables, and `QLOO_API_URL` has to be an `https` host under `qloo.com` or the key is not sent. Dispatch stays off unless you set `ATMOSPHERE_DISPATCH`.
+The demo is a public Vercel app, with no login.
+
+1. Import the repo as a Next.js project.
+2. Set `QLOO_API_KEY`, `QLOO_API_URL=https://hackathon.api.qloo.com`, and `QLOO_MODE=auto` for Production and Preview.
+3. Set `OPENAI_API_KEY` for Production and Preview. The default model is `gpt-4.1-mini`.
+4. Leave `ATMOSPHERE_DISPATCH=off` on the public demo. Set `govee` only on a deploy where you also set `GOVEE_API_KEY` and `ATMOSPHERE_OWNER_TOKEN`.
+5. Open a preview, type a prompt or use a sample (Halloween is the first), and read the trace and the comparison. The card leads with the lighting scene, the soundscape, and the screens.
+
+`/api/compile` allows 30 requests per 10 minutes per IP, and 150 across everyone on that server instance. The agent and the plain model run in parallel. The route sets `maxDuration` to 60 seconds. The platform may cap a plan lower than that. `/api/dispatch` stays at 12 per 10 minutes per IP. The limiter is in memory, so it applies per instance. A request body cannot choose the webhook, Hue, or Home Assistant address. `QLOO_API_URL` has to be an `https` host under `qloo.com` or the key is not sent.
+
+## Known limits
+
+- The color prior is a table of tag-name stems. A tag with no prior still lights a lamp, and the chip cites the entity or the tag. It does not say the fixture had no aesthetic tag.
+- The Qloo cache and the rate limit are in memory, per server instance. A cold start still calls Qloo. It does not fire the calls all at once.
+- The plain room is a live model only when a provider key is set. That key is set on Vercel Production and Preview. Local runs without it show the labeled cliché.
+- Sound is synthesized in the browser: a pad and a pulse from the Qloo artists, plus a scene bed (wind, a drone, rain, vinyl crackle, a fire). No recorded tracks.
+- A wall screen, a frame, and a marquee show a Qloo image when the entity returns one. Otherwise they are drawn type. This checkout cannot confirm live image URLs.
+- Hue is LAN-only. A public demo should use a webhook or a public Home Assistant URL.
+- Without `QLOO_API_KEY` the page uses the fixture graph and says **Mock fixture**.
+- Do not send personal data. Prompts should describe a taste, not a person.
 
 ## Project layout
 
 - `lib/qloo` live client, fixture client, response parsing
-- `lib/agent` query splitting, deterministic gather, AI SDK tools
-- `lib/atmosphere` zod schema and the compiler
-- `lib/dispatch` Hue, Home Assistant, and webhook
+- `lib/agent` query splitting, deterministic gather, AI SDK tools, plain-model comparison
+- `lib/atmosphere` zod schema, room plans, and the compiler
+- `lib/dispatch` Hue, Home Assistant, webhook, and Govee
 - `app/api/compile`, `app/api/dispatch`, `app/api/status`
-- `components` room, WebAudio desk, dossier
+- `components` room drawing, WebAudio desk, dossier, comparison

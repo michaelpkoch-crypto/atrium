@@ -21,7 +21,10 @@ export async function POST(request: Request) {
       return Response.json({ error: "Atmosphere JSON did not match the compiler schema." }, { status: 400 });
     }
 
-    const result = await dispatchAtmosphere(parsed.data, readConfig());
+    const config = readConfig();
+    const result = await dispatchAtmosphere(parsed.data, config, fetch, {
+      ownerToken: request.headers.get("x-atrium-owner") ?? "",
+    });
     return Response.json(result);
   } catch (error) {
     if (error instanceof HttpError) {

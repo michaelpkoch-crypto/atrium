@@ -2,6 +2,7 @@
 
 import type { CompileResult } from "@/lib/agent/orchestrate";
 import type { DispatchResult } from "@/lib/dispatch/lights";
+import { BulbChips, OwnerTokenField } from "@/components/govee-lights";
 import { affinityText, typeLabel } from "@/components/labels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,12 +18,16 @@ export function Dossier({
   loading,
   dispatching,
   onDispatch,
+  ownerToken = null,
+  onOwnerToken,
 }: {
   result: RoomPayload | null;
   error: string | null;
   loading: boolean;
   dispatching: boolean;
   onDispatch: () => void;
+  ownerToken?: string | null;
+  onOwnerToken?: (value: string) => void;
 }) {
   if (!result && !error) {
     return (
@@ -44,7 +49,15 @@ export function Dossier({
           {error}
         </p>
       ) : null}
-      {result ? <RoomDossier result={result} dispatching={dispatching} onDispatch={onDispatch} /> : null}
+      {result ? (
+        <RoomDossier
+          result={result}
+          dispatching={dispatching}
+          onDispatch={onDispatch}
+          ownerToken={ownerToken}
+          onOwnerToken={onOwnerToken}
+        />
+      ) : null}
     </div>
   );
 }
@@ -53,10 +66,14 @@ function RoomDossier({
   result,
   dispatching,
   onDispatch,
+  ownerToken = null,
+  onOwnerToken,
 }: {
   result: RoomPayload;
   dispatching: boolean;
   onDispatch: () => void;
+  ownerToken?: string | null;
+  onOwnerToken?: (value: string) => void;
 }) {
   const { atmosphere, graph, trace, agent, dispatch } = result;
   const mock = atmosphere.provenance.source === "mock";
@@ -87,6 +104,18 @@ function RoomDossier({
         )}
       </Section>
 
+      <Section title="Fixtures, and the Qloo row that earned each one">
+        <ul className="space-y-2">
+          {atmosphere.room.lights.map((light) => (
+            <li key={light.id} className="text-xs leading-5 text-white/75">
+              <span className="mr-2 inline-block size-2.5 rounded-full align-middle" style={{ background: light.color }} />
+              <span className="text-white">{light.kind.replace("-", " ")} · {light.label}. </span>
+              {light.citation.detail}
+            </li>
+          ))}
+        </ul>
+      </Section>
+
       <Section title="Palette, and the entity that earned it">
         <div className="grid grid-cols-4 gap-2">
           {atmosphere.palette.reasons.map((reason) => (
@@ -109,18 +138,23 @@ function RoomDossier({
       </Section>
 
       <Section title="Music affinities">
-        {atmosphere.music.map((track) => (
-          <EntityRow
-            key={`${track.entityId}-${track.name}`}
-            name={track.name}
-            type="urn:entity:artist"
-            affinity={track.affinity}
-            tags={track.tags}
-            mock={mock}
-            why={track.why}
-            muted={track.gap}
-          />
-        ))}
+        {atmosphere.music.some((track) => !track.gap) ? (
+          atmosphere.music
+            .filter((track) => !track.gap)
+            .map((track) => (
+              <EntityRow
+                key={`${track.entityId}-${track.name}`}
+                name={track.name}
+                type="urn:entity:artist"
+                affinity={track.affinity}
+                tags={track.tags}
+                mock={mock}
+                why={track.why}
+              />
+            ))
+        ) : (
+          <p className="text-xs leading-5 text-white/70">Qloo returned no artist for these signals, so the bed has no name to follow.</p>
+        )}
         <p className="text-xs text-white/60">
           Texture: {atmosphere.audio.description} Noise {atmosphere.audio.noise.toFixed(2)}, filter{" "}
           {atmosphere.audio.filterHz} Hz.
@@ -128,18 +162,26 @@ function RoomDossier({
       </Section>
 
       <Section title="Drinks, from place affinities">
-        {atmosphere.drinks.map((drink) => (
-          <div key={`${drink.venueId}-${drink.name}`} className="border border-white/10 p-3">
-            <div className="flex items-baseline justify-between gap-3">
-              <p className="font-medium">{drink.name}</p>
-              <span className="font-mono text-[10px] text-white/80">{affinityText(drink.affinity)}</span>
-            </div>
-            <p className="text-xs text-white/60">{drink.venue}</p>
-            <p className="mt-1 text-xs leading-5 text-white/75">
-              {drink.because} <Cite id={drink.citation.id} name={drink.citation.name} />
-            </p>
-          </div>
-        ))}
+        {atmosphere.drinks.some((drink) => !drink.gap) ? (
+          atmosphere.drinks
+            .filter((drink) => !drink.gap)
+            .map((drink) => (
+              <div key={`${drink.venueId}-${drink.name}`} className="border border-white/10 p-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="font-medium">{drink.name}</p>
+                  {drink.affinity != null ? (
+                    <span className="font-mono text-[10px] text-white/80">{affinityText(drink.affinity)}</span>
+                  ) : null}
+                </div>
+                <p className="text-xs text-white/60">{drink.venue}</p>
+                <p className="mt-1 text-xs leading-5 text-white/75">
+                  {drink.because} <Cite id={drink.citation.id} name={drink.citation.name} />
+                </p>
+              </div>
+            ))
+        ) : (
+          <p className="text-xs leading-5 text-white/70">Qloo returned no place, so the counter is not set.</p>
+        )}
       </Section>
 
       <Section title="Decor">
@@ -171,7 +213,7 @@ function RoomDossier({
         <Domain label="Places" rows={graph.places} />
         <Domain label="Brands" rows={graph.brands} />
         <Domain label="Books" rows={graph.books} />
-        <Domain label="Movies" rows={graph.movies} />
+        <Domain label="Films" rows={graph.movies} />
       </Section>
 
       <Section title="Tag signals">
@@ -188,14 +230,15 @@ function RoomDossier({
           <p className="text-xs text-white/80">No tag ids were sent. Entity signals were enough.</p>
         )}
         <p className="font-mono text-[10px] leading-4 break-all text-white/75">
-          signal.interests.entities={atmosphere.signals.entityIds.join(",") || "—"}
+          signal.interests.entities={atmosphere.signals.entityIds.join(",") || "none"}
         </p>
         <p className="font-mono text-[10px] leading-4 break-all text-white/75">
-          signal.interests.tags={atmosphere.signals.tagIds.join(",") || "—"}
+          signal.interests.tags={atmosphere.signals.tagIds.join(",") || "none"}
         </p>
       </Section>
 
       <Section title="Qloo calls">
+        <p className="text-xs text-white/70">Compiled in {(result.elapsedMs / 1000).toFixed(1)}s.</p>
         <ul className="space-y-2">
           {trace.map((call, index) => (
             <li key={`${call.path}-${index}`} className="font-mono text-[10px] leading-4 text-white/70">
@@ -203,6 +246,7 @@ function RoomDossier({
                 {call.mocked ? "MOCK" : call.status}
               </span>{" "}
               GET {call.path}?{new URLSearchParams(call.query).toString()} → {call.resultCount} rows
+              {call.cached ? " · cached" : ""}
               {call.error ? ` · ${call.error}` : ""}
             </li>
           ))}
@@ -215,10 +259,12 @@ function RoomDossier({
         <p className="font-mono text-[10px] tracking-[0.22em] text-white/75 uppercase">Lights</p>
         <p className="text-xs leading-5 text-white/70">
           Dispatch is {dispatch.mode}
-          {dispatch.configured ? " and configured" : ""}. {dispatch.auto ? "Auto-send is on." : "Auto-send is off."} A Hue
-          bridge on a local network is not reachable from a hosted demo; use a public webhook or Home Assistant URL for
-          that.
+          {dispatch.configured ? " and configured" : ""}. {dispatch.auto ? "Auto-send is on." : "Auto-send is off."}{" "}
+          {dispatch.mode === "govee"
+            ? "Real bulbs get the scene's steady colors. A public visitor cannot send without the owner token."
+            : "A Hue bridge on a local network is not reachable from a hosted demo; use a public webhook or Home Assistant URL for that."}
         </p>
+        {ownerToken != null && onOwnerToken ? <OwnerTokenField value={ownerToken} onChange={onOwnerToken} /> : null}
         <Button
           type="button"
           variant="outline"
@@ -226,13 +272,14 @@ function RoomDossier({
           onClick={onDispatch}
           className="border-white/20 bg-transparent text-white hover:bg-white/10"
         >
-          {dispatching ? "Sending…" : "Send this palette"}
+          {dispatching ? "Sending…" : "Send to my real lights"}
         </Button>
         {dispatch.result ? (
           <p className="text-xs text-white/75">
             {dispatch.result.dispatched ? "Sent." : "Not sent."} {dispatch.result.reason}
           </p>
         ) : null}
+        {dispatch.result?.bulbs ? <BulbChips bulbs={dispatch.result.bulbs} /> : null}
       </div>
 
       <details className="text-xs">
@@ -283,10 +330,10 @@ function EntityRow({
     <div className={`border border-white/10 p-3 ${muted ? "opacity-70" : ""}`}>
       <div className="flex items-baseline justify-between gap-3">
         <p className="font-medium">{name}</p>
-        <span className="font-mono text-[10px] text-white/80">{affinityText(affinity)}</span>
+        {affinity != null ? <span className="font-mono text-[10px] text-white/80">{affinityText(affinity)}</span> : null}
       </div>
       <p className="font-mono text-[10px] text-white/75">
-        {typeLabel(type)}
+        {typeLabel(type, name)}
         {mock ? " · fixture" : ""}
         {tags.length ? ` · ${tags.slice(0, 4).join(", ")}` : ""}
       </p>
@@ -311,8 +358,8 @@ function Domain({
           <li key={row.id} className="flex justify-between gap-3 text-xs">
             <span>{row.name}</span>
             <span className="font-mono text-white/80">
-              {affinityText(row.affinity)}
-              {row.explainers[0] ? ` · ${row.explainers[0].name}` : ""}
+              {row.affinity != null ? affinityText(row.affinity) : ""}
+              {row.explainers[0] ? `${row.affinity != null ? " · " : ""}${row.explainers[0].name}` : ""}
             </span>
           </li>
         ))}

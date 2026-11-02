@@ -1,6 +1,6 @@
 import { publicHttpOrigin, publicHttpUrl, qlooBaseUrl } from "@/lib/security/urls";
 
-export type DispatchMode = "off" | "webhook" | "hue" | "home_assistant";
+export type DispatchMode = "off" | "webhook" | "hue" | "home_assistant" | "govee";
 
 export type LlmConfig = {
   provider: "openai" | "anthropic" | "gateway";
@@ -23,6 +23,9 @@ export type AppConfig = {
     haBaseUrl: string;
     haToken: string;
     haEntityId: string;
+    goveeKey: string;
+    goveeDevices: string[];
+    ownerToken: string;
     configured: boolean;
   };
 };
@@ -49,6 +52,12 @@ export function readConfig(env: Record<string, string | undefined> = process.env
   const haBaseUrl = publicHttpOrigin(clean(env.HA_BASE_URL)) ?? "";
   const haToken = clean(env.HA_TOKEN);
   const haEntityId = clean(env.HA_ENTITY_ID);
+  const goveeKey = clean(env.GOVEE_API_KEY);
+  const ownerToken = clean(env.ATMOSPHERE_OWNER_TOKEN);
+  const goveeDevices = clean(env.GOVEE_DEVICES)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 
   const configured =
     (dispatchMode === "webhook" && webhookUrl.length > 0) ||
@@ -56,7 +65,8 @@ export function readConfig(env: Record<string, string | undefined> = process.env
     (dispatchMode === "home_assistant" &&
       haBaseUrl.length > 0 &&
       haToken.length > 0 &&
-      haEntityId.length > 0);
+      haEntityId.length > 0) ||
+    (dispatchMode === "govee" && goveeKey.length > 0 && ownerToken.length > 0);
 
   return {
     qlooMode,
@@ -73,14 +83,23 @@ export function readConfig(env: Record<string, string | undefined> = process.env
       haBaseUrl,
       haToken,
       haEntityId,
+      goveeKey,
+      goveeDevices,
+      ownerToken,
       configured: dispatchMode !== "off" && configured,
     },
   };
 }
 
 function parseDispatchMode(value: string): DispatchMode {
-  if (value === "webhook" || value === "hue" || value === "home_assistant") return value;
-  return "off";
+  const parts = value
+    .toLowerCase()
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (parts.includes("govee")) return "govee";
+  const first = parts.find((item) => item === "webhook" || item === "hue" || item === "home_assistant");
+  return first === "webhook" || first === "hue" || first === "home_assistant" ? first : "off";
 }
 
 function readLlm(env: Record<string, string | undefined>): LlmConfig | null {
@@ -122,8 +141,9 @@ export function publicStatus(config: AppConfig) {
     llm: config.llm ? { provider: config.llm.provider, model: config.llm.modelId } : null,
     dispatch: {
       mode: config.dispatch.mode,
-      auto: config.dispatch.auto && config.dispatch.configured,
+      auto: config.dispatch.mode !== "govee" && config.dispatch.auto && config.dispatch.configured,
       configured: config.dispatch.configured,
+      needsOwner: config.dispatch.mode === "govee",
     },
   };
 }

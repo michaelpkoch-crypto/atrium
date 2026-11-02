@@ -50,6 +50,7 @@ describe("mock orchestrator", () => {
           .map((row) => row.id)
           .concat(result.graph.tags.map((tag) => tag.id)),
       );
+      if (result.atmosphere.room.eraLabel) allowed.add("prompt-era");
       for (const id of collectCitationIds(result.atmosphere)) {
         expect(allowed.has(id), `${prompt} cited missing id ${id}`).toBe(true);
       }
@@ -85,7 +86,8 @@ describe("mock orchestrator", () => {
     expect(result.atmosphere.reading.map((book) => book.name)).toEqual(
       expect.arrayContaining(["Norwegian Wood"]),
     );
-    expect(["rain", "paper"]).toContain(result.atmosphere.visual.mode);
+    expect(["rain", "paper", "grain-warm"]).toContain(result.atmosphere.visual.mode);
+    expect(result.atmosphere.room.window).toBe("rain");
   });
 
   it("labels a synthetic graph when nothing matches", async () => {

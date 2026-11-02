@@ -1,6 +1,9 @@
 import type { Atmosphere } from "@/lib/atmosphere/schema";
 import type { AppConfig } from "@/lib/config";
 import { hexToRgb, rgbToXy } from "@/lib/atmosphere/color";
+import { sendGoveeScene, type GoveeBulb } from "@/lib/dispatch/govee";
+import { redactSecrets } from "@/lib/security/redact";
+import { tokensMatch } from "@/lib/security/secret";
 
 export type DispatchResult = {
   dispatched: boolean;
@@ -8,6 +11,12 @@ export type DispatchResult = {
   reason: string;
   preview: Record<string, unknown>;
   status?: number;
+  bulbs?: GoveeBulb[];
+};
+
+export type DispatchOptions = {
+  ownerToken?: string;
+  sleep?: (ms: number) => Promise<void>;
 };
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -16,6 +25,7 @@ export async function dispatchAtmosphere(
   atmosphere: Atmosphere,
   config: AppConfig,
   fetchImpl: FetchLike = fetch,
+  options: DispatchOptions = {},
 ): Promise<DispatchResult> {
   const preview = payloadFor(atmosphere);
   const { dispatch } = config;
@@ -24,7 +34,7 @@ export async function dispatchAtmosphere(
     return {
       dispatched: false,
       mode: "off",
-      reason: "Dispatch is off. Set ATMOSPHERE_DISPATCH to webhook, hue, or home_assistant.",
+      reason: "Dispatch is off. Set ATMOSPHERE_DISPATCH to webhook, hue, home_assistant, or govee.",
       preview,
     };
   }
@@ -39,6 +49,40 @@ export async function dispatchAtmosphere(
   }
 
   try {
+    if (dispatch.mode === "govee") {
+      const provided = options.ownerToken ?? "";
+      if (!provided || !tokensMatch(provided, dispatch.ownerToken)) {
+        return {
+          dispatched: false,
+          mode: "govee",
+          reason: provided
+            ? "The owner token did not match. Nothing was sent to Govee."
+            : "Enter the owner token to send to Govee. Real bulbs get the scene's steady colors. Nothing was sent.",
+          preview,
+        };
+      }
+      const sent = await sendGoveeScene({
+        apiKey: dispatch.goveeKey,
+        allowlist: dispatch.goveeDevices,
+        colors: atmosphere.room.lightScene.colors,
+        fetchImpl,
+        sleep: options.sleep,
+      });
+      const ok = sent.bulbs.some((bulb) => bulb.ok);
+      const reason = sent.error
+        ? sent.error
+        : ok
+          ? `Real bulbs get the scene's steady colors. ${sent.bulbs.filter((bulb) => bulb.ok).length} of ${sent.bulbs.length} updated.`
+          : "Govee did not accept the steady colors.";
+      return {
+        dispatched: ok,
+        mode: "govee",
+        reason: redactSecrets(reason, [dispatch.goveeKey, dispatch.ownerToken]),
+        preview,
+        bulbs: sent.bulbs,
+      };
+    }
+
     if (dispatch.mode === "webhook") {
       const response = await fetchImpl(dispatch.webhookUrl, {
         method: "POST",
@@ -119,5 +163,16 @@ function payloadFor(atmosphere: Atmosphere): Record<string, unknown> {
     },
     tempoBpm: atmosphere.audio.tempoBpm,
     source: atmosphere.provenance.source,
+    lighting: {
+      scene: atmosphere.room.lightScene.name,
+      effect: atmosphere.room.lightScene.effect,
+      colors: atmosphere.room.lightScene.colors,
+    },
+    lights: atmosphere.room.lights.map((light) => ({
+      id: light.id,
+      label: light.label,
+      color: light.color,
+      intensity: light.intensity,
+    })),
   };
 }

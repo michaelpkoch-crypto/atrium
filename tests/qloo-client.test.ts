@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { QlooClient } from "@/lib/qloo/client";
+import { resetQlooTraffic } from "@/lib/qloo/traffic";
 
-function jsonResponse(body: unknown, status = 200) {
+beforeEach(() => resetQlooTraffic());
+
+function jsonResponse(body: unknown, status = 200, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...extra },
   });
 }
 
@@ -150,6 +153,73 @@ describe("QlooClient", () => {
 
     await expect(client.search("Blade Runner")).rejects.toThrow(/hackathon\.api\.qloo\.com/);
     await expect(client.search("Blade Runner")).rejects.not.toThrow(/super-secret-key-value/);
+  });
+
+  it("serves a repeated search from memory and does not call Qloo again", async () => {
+    let calls = 0;
+    const client = new QlooClient({
+      baseUrl: "https://hackathon.api.qloo.com",
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        return jsonResponse({ success: true, results: { entities: [] } });
+      },
+    });
+    await client.search("cached lantern", 4);
+    await client.search("cached lantern", 4);
+    expect(calls).toBe(1);
+    expect(client.trace[1]?.cached).toBe(true);
+  });
+
+  it("waits out a 429 using Retry-After and records only the successful call", async () => {
+    let calls = 0;
+    const client = new QlooClient({
+      baseUrl: "https://hackathon.api.qloo.com",
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) return jsonResponse({ message: "slow down" }, 429, { "retry-after": "0" });
+        return jsonResponse({ success: true, results: { entities: [] } });
+      },
+    });
+    await expect(client.search("rate limit probe", 3)).resolves.toEqual([]);
+    expect(calls).toBe(2);
+    expect(client.trace.some((call) => call.status === 429)).toBe(false);
+    expect(client.trace[0]?.status).toBe(200);
+  });
+
+  it("does not retry a timeout", async () => {
+    let calls = 0;
+    const client = new QlooClient({
+      baseUrl: "https://hackathon.api.qloo.com",
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        calls += 1;
+        const error = new Error("The operation was aborted due to timeout");
+        error.name = "TimeoutError";
+        throw error;
+      },
+    });
+    await expect(client.search("slow film", 3)).rejects.toThrow(/timeout/i);
+    expect(calls).toBe(1);
+  });
+
+  it("keeps at most two Qloo calls in flight", async () => {
+    let active = 0;
+    let max = 0;
+    const client = new QlooClient({
+      baseUrl: "https://hackathon.api.qloo.com",
+      apiKey: "test-key",
+      fetchImpl: async () => {
+        active += 1;
+        max = Math.max(max, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+        return jsonResponse({ success: true, results: { entities: [] } });
+      },
+    });
+    await Promise.all(["alpha room", "beta room", "gamma room", "delta room"].map((query) => client.search(query, 3)));
+    expect(max).toBeLessThanOrEqual(2);
   });
 
   it("explains a 401", async () => {
